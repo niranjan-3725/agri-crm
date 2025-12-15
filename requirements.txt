@@ -1,0 +1,6 @@
+django
+pillow
+django-extensions
+weasyprint
+django-browser-reload
+django-import-export

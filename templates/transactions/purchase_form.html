@@ -1,0 +1,838 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<script>
+    let rowIdCounter = 0;
+
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('purchaseLogic', () => ({
+            rows: {% if existing_items_json %}{{ existing_items_json| safe }}{% else %}[{ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0 }]{% endif %},
+        loading_charges: {% if invoice and invoice.loading_charges %}{ { invoice.loading_charges } } {% else %} 0{% endif %},
+    discount: {% if invoice and invoice.additional_discount %} { { invoice.additional_discount } } {% else %} 0{% endif %},
+    // Sprint 22: Payment Status
+    payment_status: '{% if invoice and invoice.payment_status %}{{ invoice.payment_status }}{% else %}UNPAID{% endif %}',
+        paid_amount: {% if invoice and invoice.amount_paid %} { { invoice.amount_paid } } {% else %} 0{% endif %},
+    suppliers: [
+        {% for s in suppliers %}
+    { id: "{{ s.id }}", name: "{{ s.name|escapejs }}" },
+    {% endfor %}
+            ],
+    supplierSearch: '{% if invoice and invoice.supplier %}{{ invoice.supplier.name|escapejs }}{% endif %}',
+        supplierId: '{% if invoice and invoice.supplier %}{{ invoice.supplier.id }}{% endif %}',
+            supplierOpen: false,
+
+                // Supplier Modal State
+                showSupplierModal: false,
+                    newSupplierName: '',
+                        newSupplierPhone: '',
+                            newSupplierGstin: '',
+                                newSupplierAddress: '',
+
+                                    // Product Modal State
+                                    showProductModal: false,
+                                        activeRowIndex: null,
+                                            newProductName: '',
+                                                newProductHsn: '',
+                                                    newProductUnit: 'Kg',
+                                                        newProductCategory: '',
+                                                            newProductManufacturer: '',
+
+                                                                initData() {
+        if (this.rows.length > 0) {
+            rowIdCounter = this.rows.reduce((max, row) => Math.max(max, parseInt(row.id) || 0), 0);
+            this.rows.forEach(r => {
+                if (!r.searchResults) r.searchResults = [];
+                if (r.showDropdown === undefined) r.showDropdown = false;
+            });
+        }
+    },
+
+            get subtotal() {
+        return this.rows.reduce((sum, row) => sum + ((parseFloat(row.rate) || 0) * (parseFloat(row.qty) || 0)), 0);
+    },
+
+            get tax_total() {
+        return this.rows.reduce((sum, row) => sum + parseFloat(row.tax_amount || 0), 0);
+    },
+
+    get total_qty() {
+        return this.rows.reduce((sum, row) => sum + (parseInt(row.qty) || 0), 0);
+    },
+
+            get grand_total() {
+        let itemsTotal = this.rows.reduce((sum, row) => sum + parseFloat(row.total || 0), 0);
+        return itemsTotal + (parseFloat(this.loading_charges) || 0) - (parseFloat(this.discount) || 0);
+    },
+
+            get filteredSuppliers() {
+        if (this.supplierSearch === '') return this.suppliers;
+        return this.suppliers.filter(s => s.name.toLowerCase().includes(this.supplierSearch.toLowerCase()));
+    },
+
+    selectSupplier(s) {
+        this.supplierId = s.id;
+        this.supplierSearch = s.name;
+        this.supplierOpen = false;
+    },
+
+    addRow() {
+        this.rows.push({ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0 });
+    },
+
+    removeRow(index) {
+        if (this.rows.length > 1) {
+            this.rows.splice(index, 1);
+        }
+    },
+
+            async searchProducts(row) {
+        if (!row.product_name) {
+            row.searchResults = [];
+            return;
+        }
+        try {
+            const response = await fetch(`/search-products/?format=json&q=${encodeURIComponent(row.product_name)}`);
+            if (response.ok) {
+                const data = await response.json();
+                row.searchResults = data;
+                row.showDropdown = true;
+            }
+        } catch (e) { console.error('Search failed', e); }
+    },
+
+    selectProduct(row, item) {
+        row.product_id = item.id;
+        row.product_name = item.name;
+        row.product_tax_rate = item.tax_rate;
+        row.showDropdown = false;
+        this.calculateRow(row);
+    },
+
+    calculateRow(row) {
+        const qty = parseFloat(row.qty) || 0;
+        const rate = parseFloat(row.rate) || 0; // Basic Rate
+        const taxRate = parseFloat(row.product_tax_rate) || 0;
+
+        const taxPerUnit = rate * (taxRate / 100);
+        const netCost = rate + taxPerUnit;
+
+        row.tax_amount = taxPerUnit * qty;
+        row.net_cost = netCost;
+        row.total = netCost * qty;
+
+        if (row.margin_percent) {
+            this.calculateSelling(row);
+        } else if (row.selling_price) {
+            this.calculateMargin(row);
+        }
+    },
+
+    calculateSelling(row) {
+        const netCost = parseFloat(row.net_cost) || 0;
+        const margin = parseFloat(row.margin_percent) || 0;
+        if (netCost > 0) {
+            row.selling_price = (netCost * (1 + (margin / 100))).toFixed(2);
+        }
+    },
+
+    calculateMargin(row) {
+        const netCost = parseFloat(row.net_cost) || 0;
+        const selling = parseFloat(row.selling_price) || 0;
+        if (netCost > 0) {
+            row.margin_percent = (((selling - netCost) / netCost) * 100).toFixed(2);
+        } else {
+            row.margin_percent = 0;
+        }
+    },
+
+    formatCurrency(value) {
+        return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value || 0);
+    },
+
+    // Supplier Modal Logic
+    openSupplierModal() {
+        this.newSupplierName = this.supplierSearch;
+        this.showSupplierModal = true;
+        this.supplierOpen = false;
+    },
+
+            async saveNewSupplier() {
+        if (!this.newSupplierName) return;
+        try {
+            const response = await fetch('/create-supplier/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+                body: JSON.stringify({
+                    name: this.newSupplierName,
+                    phone: this.newSupplierPhone,
+                    gstin: this.newSupplierGstin,
+                    address: this.newSupplierAddress
+                })
+            });
+            const data = await response.json();
+            if (data.success) {
+                this.suppliers.push({ id: data.id, name: data.name });
+                this.selectSupplier({ id: data.id, name: data.name });
+                this.showSupplierModal = false;
+                this.newSupplierName = ''; this.newSupplierPhone = ''; this.newSupplierGstin = ''; this.newSupplierAddress = '';
+            } else {
+                alert('Error: ' + data.error);
+            }
+        } catch (e) { alert('Failed to create supplier'); }
+    },
+
+    // Product Modal Logic
+    openProductModal(index) {
+        this.activeRowIndex = index;
+        this.newProductName = this.rows[index].product_name || '';
+        this.showProductModal = true;
+    },
+            
+            async saveNewProduct() {
+        if (!this.newProductName || !this.newProductCategory || !this.newProductManufacturer) {
+            alert('Please fill all required fields'); return;
+        }
+        try {
+            const response = await fetch('/create-product/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value },
+                body: JSON.stringify({
+                    name: this.newProductName,
+                    hsn_code: this.newProductHsn,
+                    unit_type: this.newProductUnit,
+                    category_id: this.newProductCategory,
+                    manufacturer_id: this.newProductManufacturer
+                })
+            });
+            const data = await response.json();
+            if (data.success) {
+                let row = this.rows[this.activeRowIndex];
+                row.product_name = data.name;
+                row.product_id = data.id;
+                row.product_tax_rate = data.tax_rate;
+                this.calculateRow(row);
+                this.showProductModal = false;
+                this.newProductName = ''; this.newProductHsn = ''; this.newProductCategory = ''; this.newProductManufacturer = '';
+            } else {
+                alert('Error: ' + data.error);
+            }
+        } catch (e) { alert('Failed to create product'); }
+    },
+
+    validateSubmit(e) {
+        if (!this.supplierId) {
+            alert('Please select a valid supplier.');
+            e.preventDefault();
+            return;
+        }
+        let invalidItems = this.rows.filter(r => !r.product_id && r.product_name);
+        if (invalidItems.length > 0) {
+            alert(`Please select a valid product for all items. Item "${invalidItems[0].product_name}" is not registered.`);
+            e.preventDefault();
+            return;
+        }
+        if (this.rows.length === 0 || !this.rows[0].product_id) {
+            alert('Please add at least one valid item.');
+            e.preventDefault();
+            return;
+        }
+    }
+        }));
+    });
+</script>
+
+<div x-data="purchaseLogic" x-init="initData()"
+    class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA] font-sans selection:bg-gray-900 selection:text-white">
+
+    <!-- CENTER: Main Content Area -->
+    <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32 xl:pb-12 animate-fade-in">
+        <form method="post" action="." id="purchase-form" @submit="validateSubmit" class="max-w-5xl mx-auto space-y-10">
+            {% csrf_token %}
+
+            <!-- Header -->
+            <header class="flex flex-col gap-2">
+                <a href="{% url 'purchase_list' %}"
+                    class="group flex items-center gap-2 text-gray-400 hover:text-gray-900 transition-colors w-fit mb-1">
+                    <svg class="w-4 h-4 group-hover:-translate-x-1 transition-transform"
+                        xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m15 18-6-6 6-6" />
+                    </svg>
+                    <span class="text-xs font-bold uppercase tracking-widest">Back to Ledger</span>
+                </a>
+                <div class="flex items-center gap-2 text-gray-400 text-sm font-bold uppercase tracking-wider">
+                    <span class="bg-blue-50 text-blue-600 px-2 py-1 rounded text-xs">Purchase</span>
+                    <span>•</span>
+                    <span>{% if invoice %}Edit Entry{% else %}New Entry{% endif %}</span>
+                </div>
+                <div class="flex justify-between items-end">
+                    <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">
+                        {% if invoice %}Edit Invoice{% else %}Purchase Entry{% endif %}
+                    </h1>
+                </div>
+            </header>
+
+            {% if error %}
+            <div class="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-2xl flex items-center gap-3">
+                <span class="font-medium">{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <!-- Top Grid: Supplier, Date, Invoice -->
+            <section class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Supplier Field -->
+                <div class="space-y-3 relative">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Supplier</label>
+                    <div class="relative group">
+                        <input type="hidden" name="supplier" x-model="supplierId">
+                        <input type="text" x-model="supplierSearch" @focus="supplierOpen = true"
+                            @click.away="supplierOpen = false"
+                            class="w-full bg-white hover:bg-gray-50 focus:bg-white border-2 border-gray-100 focus:border-blue-500/20 text-gray-900 text-base font-medium rounded-2xl block px-5 py-4 transition-all duration-300 outline-none shadow-sm focus:shadow-xl focus:shadow-blue-500/5 placeholder-gray-300"
+                            placeholder="Search suppliers..." autocomplete="off">
+                        <!-- Search Icon -->
+                        <svg class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                            width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+
+                        <!-- Supplier Dropdown -->
+                        <div x-show="supplierOpen"
+                            class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-30 max-h-64 overflow-y-auto"
+                            style="display: none;">
+                            <template x-for="s in filteredSuppliers" :key="s.id">
+                                <div @click="selectSupplier(s)"
+                                    class="px-5 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-none">
+                                    <p class="font-medium text-gray-900" x-text="s.name"></p>
+                                </div>
+                            </template>
+                            <div x-show="filteredSuppliers.length === 0"
+                                class="px-5 py-4 text-gray-400 text-sm flex flex-col items-center gap-2">
+                                <span>No suppliers found</span>
+                                <button type="button" @click="openSupplierModal()"
+                                    class="text-blue-600 font-bold hover:underline py-2">+ Add New Supplier</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Date Field -->
+                <div class="space-y-3">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Invoice Date</label>
+                    <div class="relative group">
+                        <input type="date" name="date"
+                            value="{% if invoice %}{{ invoice.date|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}"
+                            class="w-full bg-white hover:bg-gray-50 focus:bg-white border-2 border-gray-100 focus:border-blue-500/20 text-gray-900 text-base font-medium rounded-2xl block px-5 py-4 transition-all duration-300 outline-none shadow-sm focus:shadow-xl focus:shadow-blue-500/5 placeholder-gray-300">
+                    </div>
+                </div>
+
+                <!-- Invoice No Field (Full Width) -->
+                <div class="md:col-span-2 space-y-3">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Reference / Invoice
+                        No</label>
+                    <div class="relative group">
+                        <input type="text" name="invoice_number"
+                            value="{% if invoice %}{{ invoice.invoice_number }}{% endif %}"
+                            class="w-full bg-white hover:bg-gray-50 focus:bg-white border-2 border-gray-100 focus:border-blue-500/20 text-gray-900 text-base font-medium rounded-2xl block px-5 py-4 transition-all duration-300 outline-none shadow-sm focus:shadow-xl focus:shadow-blue-500/5 placeholder-gray-300"
+                            placeholder="e.g. INV-8820-X">
+                        <svg class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                            width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Products Section -->
+            <section class="space-y-6 pt-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xl font-bold text-gray-900">Products</h3>
+                    <button type="button" @click="addRow()"
+                        class="text-sm font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-full transition-colors">
+                        + Add Line
+                    </button>
+                </div>
+
+                <template x-for="(row, i) in rows" :key="row.id">
+                    <div
+                        class="group relative bg-white rounded-3xl p-6 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] border border-gray-100 hover:border-blue-200 transition-all duration-300">
+                        <div class="absolute -left-3 top-8 -translate-x-full hidden xl:flex w-6 h-6 items-center justify-center text-xs font-bold text-gray-300"
+                            x-text="i + 1"></div>
+
+                        <div class="flex flex-col gap-6">
+
+                            <!-- Zone 1: Identification (Row 1) -->
+                            <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+                                <!-- Item Name (Search) -->
+                                <div class="col-span-1 md:col-span-6">
+                                    <div class="flex flex-col gap-2 h-full group/input">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest pl-1 text-blue-600 transition-colors">Item</label>
+                                        <div class="relative h-12">
+                                            <input type="hidden" :name="'product_id_' + i" x-model="row.product_id">
+                                            <input type="text" x-model="row.product_name"
+                                                @input.debounce.300ms="searchProducts(row)"
+                                                @focus="row.showDropdown = true" @click.away="row.showDropdown = false"
+                                                name="product_name[]"
+                                                class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 pl-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-blue-700 bg-blue-50/30 hover:bg-blue-50/50"
+                                                placeholder="Product name" autocomplete="off">
+
+                                            <!-- Product Dropdown -->
+                                            <div x-show="row.showDropdown"
+                                                class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"
+                                                style="display: none;">
+                                                <template x-for="p in row.searchResults" :key="p.id">
+                                                    <div @click="selectProduct(row, p)"
+                                                        class="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50">
+                                                        <div class="flex justify-between items-center">
+                                                            <span class="font-medium text-sm text-gray-900"
+                                                                x-text="p.name"></span>
+                                                            <span class="text-xs text-gray-400"
+                                                                x-text="'Tax: '+p.tax_rate+'%'"></span>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <div @click="openProductModal(i)"
+                                                    x-show="row.searchResults.length === 0 && row.product_name"
+                                                    class="px-4 py-3 bg-blue-50/50 hover:bg-blue-50 cursor-pointer text-blue-600 text-xs font-bold">
+                                                    + Create ' <span x-text="row.product_name"></span> '
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Batch -->
+                                <div class="col-span-1 md:col-span-3">
+                                    <div class="flex flex-col gap-2 h-full group/input">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Batch</label>
+                                        <div class="relative h-12">
+                                            <input type="text" x-model="row.batch_number" name="batch_number[]"
+                                                class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700"
+                                                placeholder="Batch No">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Size & Unit (Combined) -->
+                                <div class="col-span-1 md:col-span-3">
+                                    <label
+                                        class="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-1 mb-2 block group-focus-within:text-blue-500 transition-colors">Size
+                                        / Unit</label>
+                                    <div
+                                        class="flex bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl overflow-hidden h-12 transition-all focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-300 focus-within:bg-white shadow-sm">
+                                        <input type="text" x-model="row.size" name="size[]"
+                                            class="w-full pl-3 text-sm font-semibold text-gray-700 outline-none bg-transparent"
+                                            placeholder="Size">
+                                        <div class="w-px bg-gray-200 my-2"></div>
+                                        <div class="relative min-w-[80px]">
+                                            <select x-model="row.unit" name="unit[]"
+                                                class="h-full w-full bg-transparent px-2 pr-6 text-xs font-bold text-gray-500 outline-none cursor-pointer hover:text-gray-800 appearance-none">
+                                                <option value="kg">KG</option>
+                                                <option value="ltr">LTR</option>
+                                                <option value="pcs">PCS</option>
+                                                <option value="gm">GM</option>
+                                                <option value="packet">PKT</option>
+                                                <option value="bag">BAG</option>
+                                            </select>
+                                            <svg class="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                                                width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Remove Button -->
+                                <div class="col-span-1 md:col-span-2 flex justify-end absolute right-4 top-4">
+                                    <button type="button" @click="removeRow(i)"
+                                        class="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                            stroke-linejoin="round">
+                                            <polyline points="3 6 5 6 21 6"></polyline>
+                                            <path
+                                                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                            </path>
+                                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Zone 2: Dates & Qty (Row 2) -->
+                            <div
+                                class="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100/50">
+                                <!-- Mfg -->
+                                <div class="flex flex-col gap-2 h-full group/input">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Mfg
+                                        Date</label>
+                                    <div class="relative h-12">
+                                        <input type="date" x-model="row.mfg_date" name="mfg_date[]"
+                                            class="w-full h-full bg-transparent hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700">
+                                    </div>
+                                </div>
+                                <!-- Exp -->
+                                <div class="flex flex-col gap-2 h-full group/input">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Exp
+                                        Date</label>
+                                    <div class="relative h-12">
+                                        <input type="date" x-model="row.expiry_date" name="expiry_date[]"
+                                            class="w-full h-full bg-transparent hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700">
+                                    </div>
+                                </div>
+                                <!-- MRP -->
+                                <div class="flex flex-col gap-2 h-full group/input">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">MRP</label>
+                                    <div class="relative h-12">
+                                        <input type="number" step="0.01" x-model="row.mrp" name="mrp[]"
+                                            class="w-full h-full bg-transparent hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700"
+                                            placeholder="0.00">
+                                    </div>
+                                </div>
+                                <!-- Quantity (Moved Here) -->
+                                <div class="flex flex-col gap-2 h-full group/input">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest pl-1 text-blue-600 transition-colors">Quantity</label>
+                                    <div class="relative h-12">
+                                        <input type="number" x-model="row.qty"
+                                            @input="calculateRow(row); calculateSelling(row)" name="qty[]"
+                                            class="w-full h-full bg-white border border-transparent hover:border-blue-200 rounded-xl px-3 text-sm font-bold text-gray-900 outline-none transition-all duration-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-center shadow-sm"
+                                            placeholder="1" required>
+                                        <input type="hidden" :value="row.net_cost" name="net_cost[]">
+                                        <!-- Hidden Net Cost -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Zone 3: Commercials (The Grid) -->
+                            <div
+                                class="grid grid-cols-12 gap-6 items-end bg-gray-50/30 -mx-6 -mb-6 p-6 rounded-b-3xl border-t border-gray-50">
+
+                                <!-- 1. Basic Rate (2 cols) -->
+                                <div class="col-span-6 md:col-span-2">
+                                    <div class="flex flex-col gap-2 h-full group/input">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Basic
+                                            Rate</label>
+                                        <div class="relative h-12">
+                                            <input type="number" step="0.01" x-model="row.rate"
+                                                @input="calculateRow(row); calculateSelling(row)" name="purchase_rate[]"
+                                                class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700"
+                                                placeholder="0.00">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 2. Tax (2 cols) -> Display Only -->
+                                <div class="col-span-6 md:col-span-2">
+                                    <div class="flex flex-col gap-2 h-full">
+                                        <label
+                                            class="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-1">Tax
+                                            %</label>
+                                        <div class="relative h-12">
+                                            <div
+                                                class="w-full h-full bg-white border border-transparent rounded-xl px-3 flex items-center text-sm font-semibold text-gray-700">
+                                                <span x-text="row.product_tax_rate + '%'"></span>
+                                            </div>
+                                            <svg class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+                                                width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 3. Margin (3 cols) -->
+                                <div class="col-span-6 md:col-span-3">
+                                    <div class="flex flex-col gap-2 h-full group/input">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Margin
+                                            %</label>
+                                        <div class="relative h-12">
+                                            <input type="number" step="0.01" x-model="row.margin_percent"
+                                                @input="calculateSelling(row)" name="margin[]"
+                                                class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700 pl-8"
+                                                placeholder="0">
+                                            <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                                                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <line x1="19" y1="5" x2="5" y2="19"></line>
+                                                <circle cx="6.5" cy="6.5" r="2.5"></circle>
+                                                <circle cx="17.5" cy="17.5" r="2.5"></circle>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 4. Sell Price (3 cols) -->
+                                <div class="col-span-6 md:col-span-3">
+                                    <div class="flex flex-col gap-2 h-full group/input">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Sell
+                                            Price</label>
+                                        <div class="relative h-12">
+                                            <input type="number" step="0.01" x-model="row.selling_price"
+                                                @input="calculateMargin(row)" name="selling_price[]"
+                                                class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-500/30 focus:shadow-md focus:shadow-blue-500/5 text-gray-700"
+                                                placeholder="0.00">
+                                            <div
+                                                class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-300 pointer-events-none">
+                                                INR</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 5. Total (2 cols) -->
+                                <div class="col-span-12 md:col-span-2">
+                                    <div class="flex flex-col gap-2 items-end h-full">
+                                        <label
+                                            class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total</label>
+                                        <div class="h-12 flex items-center text-lg font-bold text-gray-900"
+                                            x-text="formatCurrency(row.total)">
+                                            ₹0.00
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <button type="button" @click="addRow()"
+                    class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 font-semibold hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/30 transition-all flex items-center justify-center gap-2 group">
+                    <svg class="group-hover:scale-110 transition-transform" width="20" height="20" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    <span>Add Another Item</span>
+                </button>
+            </section>
+        </form>
+    </main>
+
+    <!-- RIGHT PANEL: Contextual Actions -->
+    <aside class="xl:w-[420px] bg-white border-l border-gray-100 z-40 relative">
+        <div class="xl:fixed xl:w-[420px] h-full flex flex-col">
+
+            <div class="p-8 pb-4 border-b border-gray-50 hidden xl:block">
+                <h2 class="text-lg font-bold text-gray-900">Payment Summary</h2>
+                <p class="text-sm text-gray-400 mt-1">Review costs before processing.</p>
+            </div>
+
+            <div class="flex-1 p-8 space-y-8 overflow-y-auto">
+                <div class="space-y-4">
+                    <div
+                        class="flex justify-between text-xs font-bold text-gray-400 uppercase tracking-widest pb-2 border-b border-gray-100">
+                        <span>Breakdown</span>
+                        <span>Amt</span>
+                    </div>
+
+                    <!-- Breakdown List -->
+                    <div class="space-y-3">
+                        <div class="flex justify-between text-sm text-gray-600">
+                            <span>Total Quantity</span>
+                            <span class="font-medium" x-text="total_qty"></span>
+                        </div>
+                        <div class="flex justify-between text-sm text-gray-600">
+                            <span>Subtotal</span>
+                            <span class="font-medium" x-text="formatCurrency(subtotal)"></span>
+                        </div>
+                        <div class="flex justify-between text-sm text-gray-600">
+                            <span>Total Tax</span>
+                            <span class="font-medium" x-text="formatCurrency(tax_total)"></span>
+                        </div>
+                    </div>
+
+                    <!-- Extra Charges Section -->
+                    <div class="pt-4 space-y-4 border-t border-gray-50">
+                        <div class="flex items-center justify-between gap-4">
+                            <span class="text-xs font-bold text-gray-400 uppercase">Loading / Hamali</span>
+                            <input type="number" x-model.number="loading_charges" name="loading_charges"
+                                class="w-24 text-right bg-gray-50 border-none rounded-lg py-1 px-2 text-sm font-semibold outline-none focus:ring-1 focus:ring-blue-200"
+                                placeholder="0.00">
+                        </div>
+                        <div class="flex items-center justify-between gap-4">
+                            <span class="text-xs font-bold text-gray-400 uppercase">Discount</span>
+                            <div class="flex items-center bg-red-50 rounded-lg px-2 w-24">
+                                <span class="text-red-400 text-xs">-</span>
+                                <input type="number" x-model.number="discount" name="discount"
+                                    class="w-full text-right bg-transparent border-none py-1 text-sm font-semibold text-red-600 outline-none placeholder-red-200"
+                                    placeholder="0.00">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payment Status Control -->
+            <div class="px-8 pb-8 border-b border-gray-50">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Payment Status</h3>
+
+                <!-- Hidden inputs for form submission -->
+                <input type="hidden" name="payment_status" :value="payment_status">
+                <input type="hidden" name="amount_paid" :value="paid_amount">
+
+                <!-- Segmented Control -->
+                <div class="bg-gray-100 p-1 rounded-xl flex mb-6">
+                    <button type="button" @click="payment_status = 'UNPAID'; paid_amount = 0"
+                        :class="payment_status === 'UNPAID' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                        class="flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
+                        Unpaid
+                    </button>
+                    <button type="button" @click="payment_status = 'PARTIAL'"
+                        :class="payment_status === 'PARTIAL' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                        class="flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
+                        Partial
+                    </button>
+                    <button type="button" @click="payment_status = 'PAID'; paid_amount = grand_total"
+                        :class="payment_status === 'PAID' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                        class="flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all">
+                        Paid
+                    </button>
+                </div>
+
+                <!-- Conditional Amount Input -->
+                <div x-show="payment_status === 'PARTIAL'" x-transition class="space-y-2">
+                    <label class="text-xs font-bold text-gray-500 uppercase">Amount Paid Now</label>
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">₹</span>
+                        <input type="number" x-model.number="paid_amount"
+                            class="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl py-3 pl-8 pr-4 text-sm font-bold text-gray-900 outline-none transition-all placeholder-gray-300"
+                            placeholder="0.00">
+                    </div>
+                    <div class="flex justify-between text-xs pt-1">
+                        <span class="text-gray-400">Balance Due</span>
+                        <span class="font-bold text-red-500"
+                            x-text="formatCurrency(Math.max(0, grand_total - (parseFloat(paid_amount)||0)))"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-8 bg-gray-50/50 border-t border-gray-100 mt-auto">
+                <div class="flex justify-between items-end mb-8">
+                    <div class="text-sm font-medium text-gray-500">Grand Total</div>
+                    <div class="text-4xl font-bold tracking-tight text-gray-900" x-text="formatCurrency(grand_total)">
+                        ₹0.00
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-4 gap-4">
+                    <button type="button"
+                        class="col-span-1 flex items-center justify-center bg-white border border-gray-200 rounded-2xl hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition-colors group">
+                        <svg class="w-5 h-5 text-gray-400 group-hover:text-red-500" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="1"></circle>
+                            <circle cx="19" cy="12" r="1"></circle>
+                            <circle cx="5" cy="12" r="1"></circle>
+                        </svg>
+                    </button>
+
+                    <button @click="document.getElementById('purchase-form').submit()"
+                        class="col-span-3 py-5 rounded-2xl font-bold text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 bg-gray-900 hover:bg-black text-white shadow-gray-900/10">
+                        <span>Process Invoice</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </aside>
+
+    <!-- Supplier Modal -->
+    <div x-show="showSupplierModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display: none;"
+        x-transition.opacity>
+        <div class="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl" @click.away="showSupplierModal = false">
+            <h3 class="text-2xl font-bold mb-6">Add Supplier</h3>
+            <div class="space-y-4">
+                <input type="text" x-model="newSupplierName"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl" placeholder="Name *">
+                <input type="text" x-model="newSupplierPhone"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl" placeholder="Phone">
+                <input type="text" x-model="newSupplierGstin"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl" placeholder="GSTIN">
+                <textarea x-model="newSupplierAddress"
+                    class="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl resize-none h-24"
+                    placeholder="Address"></textarea>
+            </div>
+            <div class="flex gap-3 mt-8">
+                <button @click="showSupplierModal = false"
+                    class="flex-1 py-3 bg-gray-100 font-bold text-gray-600 rounded-xl">Cancel</button>
+                <button @click="saveNewSupplier()" class="flex-1 py-3 bg-blue-600 font-bold text-white rounded-xl">Save
+                    Supplier</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Product Modal -->
+    <div x-show="showProductModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display: none;"
+        x-transition.opacity>
+        <div class="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl" @click.away="showProductModal = false">
+            <h3 class="text-2xl font-bold mb-6">Add New Product</h3>
+            <div class="space-y-4">
+                <input type="text" x-model="newProductName"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl" placeholder="Product Name *">
+                <div class="grid grid-cols-2 gap-4">
+                    <input type="text" x-model="newProductHsn"
+                        class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl" placeholder="HSN Code">
+                    <select x-model="newProductUnit"
+                        class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl">
+                        <option value="Kg">Kg</option>
+                        <option value="Gm">Gm</option>
+                        <option value="Ltr">Ltr</option>
+                        <option value="Bag">Bag</option>
+                        <option value="Packet">Packet</option>
+                    </select>
+                </div>
+                <select x-model="newProductCategory"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl">
+                    <option value="">Select Category *</option>
+                    {% for c in categories %}
+                    <option value="{{ c.id }}">{{ c.name }}</option>
+                    {% endfor %}
+                </select>
+                <select x-model="newProductManufacturer"
+                    class="w-full h-12 px-4 bg-gray-50 border border-gray-200 rounded-xl">
+                    <option value="">Select Manufacturer *</option>
+                    {% for m in manufacturers %}
+                    <option value="{{ m.id }}">{{ m.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex gap-3 mt-8">
+                <button @click="showProductModal = false"
+                    class="flex-1 py-3 bg-gray-100 font-bold text-gray-600 rounded-xl">Cancel</button>
+                <button @click="saveNewProduct()" class="flex-1 py-3 bg-blue-600 font-bold text-white rounded-xl">Save
+                    Product</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

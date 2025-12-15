@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-slate-800">Has Categories</h1>
+        <a href="{% url 'category_add' %}" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+            + New Category
+        </a>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto shadow-md rounded-lg mb-8">
+        <table class="min-w-full text-sm text-left text-gray-500">
+            <thead class="text-xs text-gray-700 uppercase bg-slate-100">
+                <tr>
+                    <th scope="col" class="px-6 py-3">Category Name</th>
+                    <th scope="col" class="px-6 py-3">CGST Rate (%)</th>
+                    <th scope="col" class="px-6 py-3">SGST Rate (%)</th>
+                    <th scope="col" class="px-6 py-3">IGST Rate (%)</th>
+                    <th scope="col" class="px-6 py-3 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for category in categories %}
+                <tr class="bg-white border-b hover:bg-gray-50">
+                    <td class="px-6 py-4 font-medium text-gray-900">{{ category.name }}</td>
+                    <td class="px-6 py-4">{{ category.cgst_rate }}%</td>
+                    <td class="px-6 py-4">{{ category.sgst_rate }}%</td>
+                    <td class="px-6 py-4">{{ category.igst_rate }}%</td>
+                    <td class="px-6 py-4 text-right space-x-2">
+                        <a href="{% url 'category_edit' category.pk %}"
+                            class="text-blue-600 hover:text-blue-900 font-bold">Edit</a>
+                        <a href="{% url 'category_delete' category.pk %}"
+                            class="text-red-600 hover:text-red-900 font-bold">Delete</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-center">No categories found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

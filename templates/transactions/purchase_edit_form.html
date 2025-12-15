@@ -1,0 +1,354 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<div class="max-w-[95%] mx-auto" x-data="purchaseEditForm()" x-init="initData()">
+    <div class="bg-white shadow rounded-lg p-6">
+        <h1 class="text-3xl font-bold mb-6 text-slate-800">Edit Purchase - {{ invoice.invoice_number }}</h1>
+
+        {% if error %}
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+            <strong class="font-bold">Error!</strong>
+            <span class="block sm:inline">{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="." id="purchase-form">
+            {% csrf_token %}
+
+            <!-- Invoice Details -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <!-- Supplier Searchable Combobox -->
+                <div class="relative">
+                    <label class="block text-sm font-bold mb-2">Supplier</label>
+                    <input type="hidden" name="supplier" x-model="supplierId">
+                    <input type="text" x-model="supplierSearch" @focus="supplierOpen = true"
+                        @click.away="supplierOpen = false" class="w-full border p-2 rounded"
+                        placeholder="Search Supplier..." required>
+
+                    <ul x-show="supplierOpen"
+                        class="absolute z-10 w-full bg-white border border-gray-300 rounded shadow-lg max-h-60 overflow-y-auto mt-1"
+                        style="display: none;">
+                        <template x-for="s in filteredSuppliers" :key="s.id">
+                            <li @click="selectSupplier(s)" class="px-4 py-2 hover:bg-blue-100 cursor-pointer text-sm"
+                                x-text="s.name"></li>
+                        </template>
+                        <li x-show="filteredSuppliers.length === 0" class="px-4 py-2 text-gray-500 text-sm">No suppliers
+                            found</li>
+                    </ul>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-bold mb-2">Invoice Number</label>
+                    <input type="text" name="invoice_number" class="w-full border p-2 rounded" required
+                        value="{{ invoice.invoice_number }}">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-2">Date</label>
+                    <input type="date" name="date" class="w-full border p-2 rounded" required
+                        value="{{ invoice.date|date:'Y-m-d' }}">
+                </div>
+            </div>
+
+            <!-- Items Table -->
+            <div class="overflow-x-auto mb-6">
+                <table class="min-w-full text-sm text-left text-gray-500">
+                    <thead class="text-xs text-gray-700 uppercase bg-slate-100">
+                        <tr>
+                            <th class="px-2 py-2 w-48">Product <a href="#" @click.prevent="showProductModal = true"
+                                    class="text-blue-600 ml-1 text-xs hover:underline">(+New)</a></th>
+                            <th class="px-2 py-2 w-32">Batch No</th>
+                            <th class="px-2 py-2 w-32">Mfg Date</th>
+                            <th class="px-2 py-2 w-32">Expiry</th>
+                            <th class="px-2 py-2 w-20">Size</th>
+                            <th class="px-2 py-2 w-20">Unit</th>
+                            <th class="px-2 py-2 w-20">Qty</th>
+                            <th class="px-2 py-2 w-24">MRP</th>
+                            <th class="px-2 py-2 w-24">Sell Price</th>
+                            <th class="px-2 py-2 w-24">Rate (Pre)</th>
+                            <th class="px-2 py-2 w-20">Tax</th>
+                            <th class="px-2 py-2 w-24">Total</th>
+                            <th class="px-2 py-2 w-8"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(row, index) in rows" :key="index">
+                            <tr class="border-b hover:bg-gray-50">
+                                <td class="px-2 py-2">
+                                    <input type="text" x-model="row.product_name" @change="fetchProductDetails(row)"
+                                        name="product_name[]" list="products" hx-get="/search-products/"
+                                        hx-trigger="input changed delay:300ms" hx-target="#products" hx-swap="innerHTML"
+                                        class="w-full border p-1 rounded" placeholder="Search product..."
+                                        autocomplete="off" required>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="text" x-model="row.batch_number" name="batch_number[]"
+                                        class="w-full border p-1 rounded" required>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="date" x-model="row.mfg_date" name="mfg_date[]"
+                                        class="w-full border p-1 rounded">
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="date" x-model="row.expiry_date" name="expiry_date[]"
+                                        class="w-full border p-1 rounded">
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="number" step="0.01" x-model="row.size" name="size[]"
+                                        class="w-full border p-1 rounded" placeholder="0">
+                                </td>
+                                <td class="px-2 py-2">
+                                    <select x-model="row.unit" name="unit[]" class="w-full border p-1 rounded">
+                                        <option value="kg">kg</option>
+                                        <option value="gm">gm</option>
+                                        <option value="ltr">Ltr</option>
+                                        <option value="ml">ml</option>
+                                        <option value="packet">Packet</option>
+                                        <option value="bag">Bag</option>
+                                    </select>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="number" x-model="row.qty" @input="calculateRow(row)" name="qty[]"
+                                        class="w-full border p-1 rounded" required>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="number" step="0.01" x-model="row.mrp" name="mrp[]"
+                                        class="w-full border p-1 rounded" required>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="number" step="0.01" x-model="row.selling_price" name="selling_price[]"
+                                        class="w-full border p-1 rounded" placeholder="Sell Price">
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="number" step="0.01" x-model="row.rate" @input="calculateRow(row)"
+                                        name="purchase_rate[]" class="w-full border p-1 rounded" required>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <div class="text-xs text-gray-500" x-text="row.product_tax_rate + '%'"></div>
+                                    <div class="font-bold text-slate-700" x-text="formatCurrency(row.tax_amount)"></div>
+                                </td>
+                                <td class="px-2 py-2">
+                                    <input type="text" :value="formatCurrency(row.total)" readonly
+                                        class="w-full bg-gray-100 border p-1 rounded text-right font-bold text-xs">
+                                </td>
+                                <td class="px-2 py-2 text-center">
+                                    <button type="button" @click="removeRow(index)"
+                                        class="text-red-600 hover:text-red-800 font-bold">X</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <button type="button" @click="addRow()"
+                class="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-2 px-4 rounded mb-6">
+                + Add Item
+            </button>
+
+            <!-- Footer Totals -->
+            <div class="flex justify-end border-t pt-4 space-x-8 text-right">
+                <div>
+                    <p class="text-sm text-gray-500 uppercase">Total Taxable</p>
+                    <p class="text-xl font-bold" x-text="formatCurrency(totalTaxable)"></p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-500 uppercase">Total Tax</p>
+                    <p class="text-xl font-bold text-blue-600" x-text="formatCurrency(totalTax)"></p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-500 uppercase">Grand Total</p>
+                    <p class="text-2xl font-bold text-slate-800" x-text="formatCurrency(grandTotal)"></p>
+                </div>
+            </div>
+
+            <div class="flex justify-end mt-8 space-x-4">
+                <a href="{% url 'purchase_detail' invoice.pk %}"
+                    class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-8 rounded-lg">
+                    Cancel
+                </a>
+                <button type="submit"
+                    class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg">
+                    Update Purchase
+                </button>
+            </div>
+
+        </form>
+    </div>
+
+    <!-- Datalist for autocomplete -->
+    <datalist id="products">
+    </datalist>
+
+    <!-- Quick Add Modal -->
+    <div x-show="showProductModal" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="showProductModal = false">
+                <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div
+                class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <form hx-post="{% url 'create_product_ajax' %}" hx-target="#products" hx-swap="beforeend"
+                    @htmx:after-request="if(event.detail.successful) showProductModal = false">
+                    {% csrf_token %}
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Quick Add Product</h3>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2">Name</label>
+                            <input type="text" name="name" class="shadow border rounded w-full py-2 px-3 text-gray-700"
+                                required>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2">Category</label>
+                            <select name="category" class="shadow border rounded w-full py-2 px-3 text-gray-700"
+                                required>
+                                {% for c in categories %}
+                                <option value="{{ c.id }}">{{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2">Manufacturer</label>
+                            <select name="manufacturer" class="shadow border rounded w-full py-2 px-3 text-gray-700"
+                                required>
+                                {% for m in manufacturers %}
+                                <option value="{{ m.id }}">{{ m.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="flex gap-4 mb-4">
+                            <div class="w-1/2">
+                                <label class="block text-gray-700 text-sm font-bold mb-2">Unit</label>
+                                <select name="unit_type" class="shadow border rounded w-full py-2 px-3 text-gray-700">
+                                    <option value="Bag">Bag</option>
+                                    <option value="Packet">Packet</option>
+                                    <option value="Bottle">Bottle</option>
+                                    <option value="Kg">Kg</option>
+                                    <option value="Ltr">Ltr</option>
+                                </select>
+                            </div>
+                            <div class="w-1/2">
+                                <label class="block text-gray-700 text-sm font-bold mb-2">HSN Code</label>
+                                <input type="text" name="hsn_code"
+                                    class="shadow border rounded w-full py-2 px-3 text-gray-700">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button type="submit"
+                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 sm:ml-3 sm:w-auto sm:text-sm">
+                            Save Product
+                        </button>
+                        <button type="button" @click="showProductModal = false"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+{{ existing_items|json_script:"existing-items-data" }}
+
+<script>
+    function purchaseEditForm() {
+        // Get pre-populated data from json_script
+        const existingItemsData = JSON.parse(document.getElementById('existing-items-data').textContent);
+
+        return {
+            rows: existingItemsData.map(item => ({
+                ...item,
+                tax_amount: 0,
+                total: 0
+            })),
+
+            suppliers: [
+                {% for s in suppliers %}
+        { id: "{{ s.id }}", name: "{{ s.name|escapejs }}" },
+        {% endfor %}
+            ],
+        supplierSearch: '{{ invoice.supplier.name|escapejs }}',
+            supplierId: '{{ invoice.supplier.id }}',
+                supplierOpen: false,
+                    showProductModal: false,
+
+                        initData() {
+            this.rows.forEach(row => this.calculateRow(row));
+            fetch('/search-products/')
+                .then(r => r.text())
+                .then(html => {
+                    document.getElementById('products').innerHTML = html;
+                });
+        },
+
+            get filteredSuppliers() {
+            if (this.supplierSearch === '') return this.suppliers;
+            return this.suppliers.filter(s => s.name.toLowerCase().includes(this.supplierSearch.toLowerCase()));
+        },
+
+        selectSupplier(s) {
+            this.supplierId = s.id;
+            this.supplierSearch = s.name;
+            this.supplierOpen = false;
+        },
+
+        addRow() {
+            this.rows.push({
+                product_name: '', batch_number: '', mfg_date: '', expiry_date: '',
+                size: '', unit: 'kg', qty: 1, mrp: 0, rate: 0,
+                product_tax_rate: 0, tax_amount: 0, total: 0
+            });
+        },
+
+        removeRow(index) {
+            this.rows.splice(index, 1);
+        },
+
+            async fetchProductDetails(row) {
+            if (!row.product_name) return;
+            try {
+                const response = await fetch(`/get-product-details/?name=${encodeURIComponent(row.product_name)}`);
+                const data = await response.json();
+                if (data.error) {
+                    row.product_tax_rate = 0;
+                } else {
+                    row.product_tax_rate = data.tax_rate;
+                }
+                this.calculateRow(row);
+            } catch (e) {
+                console.error("Failed to fetch product details", e);
+            }
+        },
+
+        calculateRow(row) {
+            const qty = parseFloat(row.qty) || 0;
+            const rate = parseFloat(row.rate) || 0;
+            const taxRate = parseFloat(row.product_tax_rate) || 0;
+            const taxPerUnit = rate * (taxRate / 100);
+            row.tax_amount = taxPerUnit * qty;
+            row.total = (rate + taxPerUnit) * qty;
+        },
+
+            get totalTaxable() {
+            return this.rows.reduce((sum, row) => sum + ((parseFloat(row.rate) || 0) * (parseFloat(row.qty) || 0)), 0);
+        },
+
+            get totalTax() {
+            return this.rows.reduce((sum, row) => sum + row.tax_amount, 0);
+        },
+
+            get grandTotal() {
+            return this.rows.reduce((sum, row) => sum + row.total, 0);
+        },
+
+        formatCurrency(value) {
+            return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
+        }
+    }
+    }
+</script>
+{% endblock %}

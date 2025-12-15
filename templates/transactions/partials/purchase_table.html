@@ -1,0 +1,131 @@
+<div class="space-y-4 animate-fade-in-up">
+    {% load humanize %}
+    {% for invoice in invoices %}
+    <!-- Ledger Row -->
+    <div onclick="window.location.href='{% url 'purchase_detail' invoice.pk %}'"
+        class="group bg-white rounded-2xl p-5 border border-gray-100 hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 cursor-pointer flex flex-col md:flex-row items-center gap-6">
+
+        <!-- Date Block -->
+        <div class="flex md:flex-col items-center md:items-start gap-2 md:gap-0 w-full md:w-24 min-w-[100px]">
+            <div class="text-xs font-bold text-gray-400 uppercase tracking-widest">{{ invoice.date|date:"M d" }}</div>
+            <div class="text-sm font-bold text-gray-900">{{ invoice.date|date:"Y" }}</div>
+        </div>
+
+        <!-- Supplier Info -->
+        <div class="flex-1 w-full text-left">
+            <h4 class="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{{ invoice.supplier.name }}</h4>
+            <div class="flex items-center gap-2 mt-1">
+                <span class="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded uppercase tracking-wider">{{ invoice.invoice_number }}</span>
+                {% if invoice.items_count > 0 %}
+                <span class="text-xs font-medium text-gray-400">• {{ invoice.items_count }} Items</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Amount & Actions -->
+        <div class="flex items-center justify-between w-full md:w-auto gap-8">
+            <div class="text-right">
+                <div class="text-xl font-bold text-gray-900">₹{{ invoice.total_amount|intcomma }}</div>
+                <!-- Status Badge -->
+                {% if invoice.payment_status == 'PAID' %}
+                <div
+                    class="text-[10px] font-bold text-green-600 uppercase tracking-widest bg-green-50 px-2 py-0.5 rounded inline-block mt-1">
+                    Paid</div>
+                {% elif invoice.payment_status == 'PARTIAL' %}
+                <div
+                    class="text-[10px] font-bold text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-0.5 rounded inline-block mt-1">
+                    Partial</div>
+                {% else %}
+                <div
+                    class="text-[10px] font-bold text-red-600 uppercase tracking-widest bg-red-50 px-2 py-0.5 rounded inline-block mt-1">
+                    Unpaid</div>
+                {% endif %}
+            </div>
+
+            <div
+                class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity translate-x-2 group-hover:translate-x-0 duration-300">
+                <!-- View Icon -->
+                <button
+                    class="p-2 bg-gray-50 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-xl transition-colors"
+                    title="View Details">
+                    <svg class="w-[18px] h-[18px]" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path
+                            d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                        <circle cx="12" cy="12" r="3" />
+                    </svg>
+                </button>
+                <!-- Edit Icon -->
+                <a href="{% url 'purchase_edit' invoice.pk %}" onclick="event.stopPropagation();"
+                    class="p-2 bg-gray-50 hover:bg-amber-50 text-gray-400 hover:text-amber-600 rounded-xl transition-colors"
+                    title="Edit Invoice">
+                    <svg class="w-[18px] h-[18px]" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                    </svg>
+                </a>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="text-center py-10 text-gray-500">
+        No purchase invoices found.
+    </div>
+    {% endfor %}
+
+    <!-- Pagination -->
+    {% if invoices.paginator.num_pages > 1 %}
+    <div class="flex items-center justify-center gap-6 pt-8 pb-4">
+        {% if invoices.has_previous %}
+        <button hx-get="{% url 'purchase_list' %}?page={{ invoices.previous_page_number }}&q={{ q|default:'' }}"
+            hx-target="#purchase-table" onclick="window.scrollTo(0,0)"
+            class="group p-4 rounded-2xl bg-white border border-gray-100 text-gray-400 hover:text-gray-900 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 transition-all duration-300">
+            <svg class="group-hover:-translate-x-1 transition-transform w-[20px]" xmlns="http://www.w3.org/2000/svg"
+                width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 18-6-6 6-6" />
+            </svg>
+        </button>
+        {% else %}
+        <button disabled
+            class="p-4 rounded-2xl bg-white border border-gray-100 text-gray-300 cursor-not-allowed opacity-50">
+            <svg class="w-[20px]" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m15 18-6-6 6-6" />
+            </svg>
+        </button>
+        {% endif %}
+
+        <div class="flex flex-col items-center gap-1">
+            <span class="text-sm font-bold text-gray-900">
+                Page {{ invoices.number }}
+            </span>
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                of {{ invoices.paginator.num_pages }}
+            </span>
+        </div>
+
+        {% if invoices.has_next %}
+        <button hx-get="{% url 'purchase_list' %}?page={{ invoices.next_page_number }}&q={{ q|default:'' }}"
+            hx-target="#purchase-table" onclick="window.scrollTo(0,0)"
+            class="group p-4 rounded-2xl bg-white border border-gray-100 text-gray-400 hover:text-gray-900 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 transition-all duration-300">
+            <svg class="group-hover:translate-x-1 transition-transform w-[20px]" xmlns="http://www.w3.org/2000/svg"
+                width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="m9 18 6-6-6-6" />
+            </svg>
+        </button>
+        {% else %}
+        <button disabled
+            class="p-4 rounded-2xl bg-white border border-gray-100 text-gray-300 cursor-not-allowed opacity-50">
+            <svg class="w-[20px]" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m9 18 6-6-6-6" />
+            </svg>
+        </button>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>

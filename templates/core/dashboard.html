@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h1 class="text-3xl font-bold mb-8 text-slate-800">Dashboard</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+    <!-- Low Stock Card -->
+    <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded shadow">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold text-red-700">Low Stock</h2>
+            <span class="text-3xl font-bold text-red-800">{{ low_stock_count }}</span>
+        </div>
+        <p class="text-red-600 mt-2">Batches below 10 units</p>
+    </div>
+
+    <!-- Expiring Soon Card -->
+    <div class="bg-yellow-50 border-l-4 border-yellow-500 p-6 rounded shadow">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold text-yellow-700">Expiring Soon</h2>
+            <span class="text-3xl font-bold text-yellow-800">{{ expiring_soon }}</span>
+        </div>
+        <p class="text-yellow-600 mt-2">Next 30 days</p>
+    </div>
+
+    <!-- Today's Sales Card -->
+    <div class="bg-green-50 border-l-4 border-green-500 p-6 rounded shadow">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xl font-semibold text-green-700">Today's Sales</h2>
+            <span class="text-3xl font-bold text-green-800">₹{{ todays_sales }}</span>
+        </div>
+        <p class="text-green-600 mt-2">Total Revenue Today</p>
+    </div>
+
+</div>
+{% endblock %}

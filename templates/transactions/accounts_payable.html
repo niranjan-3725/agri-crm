@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="flex flex-col xl:flex-row min-h-screen"
+    x-data="{ showPayModal: false, invoiceId: '', amount: 0, mode: 'CASH' }">
+
+    <!-- CENTER: Main Content Area -->
+    <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32 xl:pb-12 animate-fade-in">
+        <div class="max-w-5xl mx-auto space-y-10">
+
+            <!-- Header -->
+            <header class="flex flex-col gap-2">
+                <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+                    <span>Finance</span>
+                    <span>•</span>
+                    <span>Payables</span>
+                </div>
+                <h1 class="text-5xl font-bold text-gray-900 tracking-tight">Accounts Payable</h1>
+            </header>
+
+            <!-- KPI Grid -->
+            <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Card 1: Outstanding -->
+                <div
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 flex flex-col justify-between h-48 group hover:border-blue-100 transition-colors">
+                    <div class="text-gray-400 text-xs font-bold uppercase tracking-widest">Total Outstanding</div>
+                    <div class="text-4xl font-bold tracking-tight text-gray-900">₹{{ total_outstanding|intcomma }}</div>
+                    <div class="text-sm font-medium text-gray-400">Total Unpaid & Partial</div>
+                </div>
+
+                <!-- Card 2: Overdue -->
+                <div
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 flex flex-col justify-between h-48 group hover:border-red-100 transition-colors">
+                    <div class="text-red-400 text-xs font-bold uppercase tracking-widest">Overdue Amount</div>
+                    <div class="text-4xl font-bold tracking-tight text-red-500">₹{{ overdue_amount|intcomma }}</div>
+                    <div class="text-sm font-medium text-red-400/70">Requires Immediate Action</div>
+                </div>
+
+                <!-- Card 3: Paid This Month -->
+                <div
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 flex flex-col justify-between h-48 group hover:border-green-100 transition-colors">
+                    <div class="text-green-600/70 text-xs font-bold uppercase tracking-widest">Paid (This Month)</div>
+                    <div class="text-4xl font-bold tracking-tight text-green-600">₹{{ paid_this_month|intcomma }}</div>
+                    <div class="text-sm font-medium text-green-600/50">Outflow current month</div>
+                </div>
+            </section>
+
+            <!-- Urgent Bills List -->
+            <section class="space-y-6">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xl font-bold text-gray-900">Pending Invoices <span
+                            class="text-gray-400 ml-2 text-sm">{{ pending_invoices.count }}</span></h2>
+                </div>
+
+                <div class="space-y-4">
+                    {% for invoice in pending_invoices %}
+                    <div
+                        class="bg-white rounded-3xl p-6 border border-gray-100 hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 flex flex-col md:flex-row items-center gap-6">
+
+                        <!-- Left: Info -->
+                        <div class="flex-1 w-full text-left">
+                            <a href="{% url 'purchase_detail' invoice.pk %}" class="group block">
+                                <h4 class="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                                    {{ invoice.supplier.name }}</h4>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <span
+                                        class="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded uppercase tracking-wider group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors">
+                                        {% if invoice.invoice_number %}
+                                        {{ invoice.invoice_number }}
+                                        {% else %}
+                                        #INV-MISSING
+                                        {% endif %}
+                                    </span>
+                                    <span class="text-xs font-medium text-gray-400">
+                                        • {{ invoice.date|date:"d M Y" }}
+                                    </span>
+                                </div>
+                            </a>
+                        </div>
+
+                        <!-- Middle: Due Date -->
+                        <div class="w-full md:w-auto flex justify-center">
+                            {% if invoice.due_date < today %} <div
+                                class="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="8" x2="12" y2="12" />
+                                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                                </svg>
+                                Due: {{ invoice.due_date|date:"M d" }}
+                        </div>
+                        {% else %}
+                        <div
+                            class="px-4 py-2 bg-gray-50 text-gray-500 rounded-xl text-xs font-bold uppercase tracking-wider">
+                            Due: {{ invoice.due_date|date:"M d" }}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Right: Amount & Action -->
+                    <div class="flex items-center justify-between w-full md:w-auto gap-8">
+                        <div class="text-right">
+                            <div class="text-xl font-bold text-gray-900">₹{{ invoice.balance_due|intcomma }}</div>
+                            <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">Balance</div>
+                        </div>
+
+                        {% if invoice.payment_status == 'PAID' %}
+                        <div
+                            class="px-6 py-3 bg-green-50 text-green-600 rounded-xl font-bold text-sm border border-green-100 flex items-center gap-2">
+                            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                <polyline points="22 4 12 14.01 9 11.01" />
+                            </svg>
+                            <span>Settled</span>
+                        </div>
+                        {% else %}
+                        <button
+                            @click="invoiceId = '{{ invoice.id }}'; amount = {{ invoice.balance_due }}; showPayModal = true"
+                            class="bg-black text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg hover:scale-105 active:scale-95 transition-all transform flex items-center gap-2">
+                            <span>Pay</span>
+                            <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-20 bg-gray-50 rounded-3xl border border-dashed border-gray-200">
+                    <div class="text-gray-400 font-medium">All caught up! No pending invoices.</div>
+                </div>
+                {% endfor %}
+        </div>
+        </section>
+
+</div>
+</main>
+
+<!-- RIGHT PANEL: Activity Feed -->
+<aside class="xl:w-[420px] bg-white border-l border-gray-100 z-40 relative">
+    <div class="xl:fixed xl:w-[420px] h-full flex flex-col">
+        <div class="p-8 border-b border-gray-50">
+            <h2 class="text-lg font-bold text-gray-900">Recent Activity</h2>
+            <p class="text-sm text-gray-400 mt-1">Latest outgoing payments</p>
+        </div>
+
+        <div class="flex-1 p-8 overflow-y-auto">
+            <div class="space-y-8 relative">
+                <!-- Vertical Line -->
+                <div class="absolute left-[19px] top-2 bottom-0 w-0.5 bg-gray-100"></div>
+
+                {% for payment in recent_payments %}
+                <div class="relative flex gap-6 group">
+                    <!-- Dot -->
+                    <div
+                        class="w-10 h-10 rounded-full bg-white border-4 border-gray-50 flex items-center justify-center z-10 shrink-0 group-hover:border-blue-50 transition-colors">
+                        <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
+                    </div>
+
+                    <div class="pb-2">
+                        <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            {{ payment.created_at|date:"M d, H:i" }}
+                        </div>
+                        <div class="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                            Paid to {{ payment.invoice.supplier.name }}
+                        </div>
+                        <div class="text-sm text-gray-500 mt-1">Invoice #{{ payment.invoice.invoice_number }}</div>
+                        <div class="mt-2 text-lg font-bold text-gray-900">₹{{ payment.amount|intcomma }}</div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="pl-16 text-sm text-gray-400 italic">No recent payments</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- Quick Pay Modal -->
+<div x-show="showPayModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    style="display: none;" x-transition.opacity>
+
+    <div class="bg-white rounded-[2rem] p-8 w-full max-w-md shadow-2xl relative" @click.away="showPayModal = false">
+        <button @click="showPayModal = false" class="absolute right-6 top-6 text-gray-400 hover:text-gray-900">
+            <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+        </button>
+
+        <h3 class="text-2xl font-bold mb-2 text-gray-900">Record Payment</h3>
+        <p class="text-sm text-gray-400 mb-8">Enter payment details below.</p>
+
+        <form hx-post="/transactions/record-payment/" hx-swap="none"
+            @htmx:after-request="showPayModal = false; window.location.reload()">
+            {% csrf_token %}
+            <input type="hidden" name="invoice_id" x-model="invoiceId">
+
+            <div class="space-y-6">
+                <!-- Amount -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Amount</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">₹</span>
+                        <input type="number" step="0.01" name="amount" x-model="amount"
+                            class="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl py-4 pl-10 pr-4 text-xl font-bold text-gray-900 outline-none transition-all">
+                    </div>
+                </div>
+
+                <!-- Mode -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Payment Mode</label>
+                    <select name="payment_mode" x-model="mode"
+                        class="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-xl py-4 px-4 text-sm font-bold text-gray-900 outline-none transition-all appearance-none cursor-pointer">
+                        <option value="CASH">Cash</option>
+                        <option value="UPI">UPI</option>
+                        <option value="BANK">Bank Transfer</option>
+                        <option value="CHEQUE">Cheque</option>
+                    </select>
+                </div>
+
+                <!-- Notes -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Reference /
+                        Notes</label>
+                    <textarea name="notes" placeholder="Cheque No, Transaction ID, or Notes..."
+                        class="w-full h-24 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl py-4 px-4 text-sm font-medium text-gray-900 outline-none transition-all resize-none placeholder-gray-400"></textarea>
+                </div>
+
+                <button type="submit"
+                    class="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-gray-900 shadow-xl shadow-gray-900/10 active:scale-95 transition-all">
+                    Confirm Payment
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+</div>
+{% endblock %}

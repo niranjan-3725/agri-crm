@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-slate-800">Sales Register</h1>
+        <a href="{% url 'create_sale' %}" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+            + New Sale
+        </a>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white p-4 rounded shadow mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <input type="text" name="q" placeholder="Search by Mobile, Name, or Invoice #..."
+                    class="shadow border rounded w-full py-2 px-3 text-gray-700" hx-get="{% url 'sales_list' %}"
+                    hx-trigger="keyup changed delay:500ms" hx-target="#sales-table" hx-include="[name='date']">
+            </div>
+            <div>
+                <input type="date" name="date" class="shadow border rounded w-full py-2 px-3 text-gray-700"
+                    hx-get="{% url 'sales_list' %}" hx-trigger="change" hx-target="#sales-table"
+                    hx-include="[name='q']">
+            </div>
+        </div>
+    </div>
+
+    <!-- Table Container -->
+    <div id="sales-table">
+        {% include 'transactions/partials/sales_table.html' %}
+    </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,65 @@
+<div class="overflow-x-auto shadow-md rounded-lg">
+    <table class="min-w-full text-sm text-left text-gray-500">
+        <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+            <tr>
+                <th scope="col" class="px-6 py-3">Invoice No</th>
+                <th scope="col" class="px-6 py-3">Date</th>
+                <th scope="col" class="px-6 py-3">Customer</th>
+                <th scope="col" class="px-6 py-3">Total Amount</th>
+                <th scope="col" class="px-6 py-3">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for invoice in invoices %}
+            <tr class="bg-white border-b hover:bg-gray-50">
+                <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
+                    {{ invoice.invoice_number }}
+                </td>
+                <td class="px-6 py-4">
+                    {{ invoice.date }}
+                </td>
+                <td class="px-6 py-4">
+                    {{ invoice.customer.name|default:"Walking Customer" }}
+                </td>
+                <td class="px-6 py-4 font-bold text-gray-900">
+                    ₹{{ invoice.grand_total }}
+                </td>
+                <td class="px-6 py-4 space-x-2">
+                    <a href="{% url 'invoice_detail' invoice.pk %}"
+                        class="font-medium text-blue-600 hover:underline">View</a>
+                    <!-- Placeholder for Delete if needed, though user requirement said View and Delete button -->
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" class="px-6 py-4 text-center">No sales found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Pagination -->
+    <div class="p-4 flex justify-between items-center">
+        <span class="text-sm text-gray-700">
+            Page {{ invoices.number }} of {{ invoices.paginator.num_pages }}
+        </span>
+        <div class="inline-flex mt-2 xs:mt-0">
+            {% if invoices.has_previous %}
+            <button
+                hx-get="{% url 'sales_list' %}?page={{ invoices.previous_page_number }}&q={{ q|default:'' }}&date={{ date_filter|default:'' }}"
+                hx-target="#sales-table"
+                class="py-2 px-4 text-sm font-medium text-white bg-gray-800 rounded-l hover:bg-gray-900">
+                Prev
+            </button>
+            {% endif %}
+            {% if invoices.has_next %}
+            <button
+                hx-get="{% url 'sales_list' %}?page={{ invoices.next_page_number }}&q={{ q|default:'' }}&date={{ date_filter|default:'' }}"
+                hx-target="#sales-table"
+                class="py-2 px-4 text-sm font-medium text-white bg-gray-800 border-0 border-l border-gray-700 rounded-r hover:bg-gray-900">
+                Next
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</div>

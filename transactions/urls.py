@@ -1,0 +1,24 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('sales/new/', views.create_sale, name='create_sale'),
+    path('search-products/', views.search_products, name='search_products'),
+    path('get-product-details/', views.get_product_details, name='get_product_details'),
+    path('get-batch-details/', views.get_batch_details, name='get_batch_details'),
+    path('sales/', views.sales_list, name='sales_list'),
+    path('sales/<int:pk>/', views.invoice_detail, name='invoice_detail'),
+    path('purchases/', views.purchase_list, name='purchase_list'),
+    path('purchases/new/', views.create_purchase, name='create_purchase'),
+    path('purchases/<int:pk>/', views.purchase_detail, name='purchase_detail'),
+    path('purchases/<int:pk>/edit/', views.purchase_edit, name='purchase_edit'),
+    path('purchases/<int:pk>/delete/', views.purchase_delete, name='purchase_delete'),
+    path('transactions/payable/', views.accounts_payable, name='accounts_payable'),
+    path('transactions/record-payment/', views.record_payment, name='record_payment'),
+    path('payments/delete/<int:pk>/', views.delete_supplier_payment, name='delete_supplier_payment'),
+    path('returns/', views.returns_list, name='returns_list'),
+    path('returns/sales/new/', views.create_sales_return, name='create_sales_return'),
+    path('returns/purchase/new/', views.create_purchase_return, name='create_purchase_return'),
+    path('create-supplier/', views.create_supplier, name='create_supplier'),
+    path('create-product/', views.create_product, name='create_product'),
+]

@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto" x-data="purchaseReturnForm()">
+    <h1 class="text-3xl font-bold mb-8 text-slate-800">Purchase Return (Outward)</h1>
+
+    {% if error %}
+    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+        <strong class="font-bold">Error!</strong>
+        <span class="block sm:inline">{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <form method="POST" action="{% url 'create_purchase_return' %}">
+        {% csrf_token %}
+
+        <!-- Header -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 bg-white p-6 rounded shadow">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Supplier</label>
+                <select name="supplier"
+                    class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    required>
+                    <option value="">-- Select Supplier --</option>
+                    {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Date</label>
+                <input type="date" name="date"
+                    class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    value="{% now 'Y-m-d' %}" required>
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2">Reason</label>
+                <input type="text" name="reason" placeholder="e.g. Damaged Goods"
+                    class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    required>
+            </div>
+        </div>
+
+        <!-- Items Table -->
+        <div class="bg-white rounded shadow overflow-x-auto mb-8">
+            <table class="min-w-full">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Product Search</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Batch
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Current Stock</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty
+                            to Return</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Refund Price (Unit)</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total
+                            Refund</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Action</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <template x-for="(row, index) in rows" :key="row.id">
+                        <tr>
+                            <!-- Product Search -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <input type="text" placeholder="Type to search..."
+                                    class="shadow border rounded w-full py-1 px-2 text-sm" list="product-list"
+                                    hx-get="{% url 'search_products' %}" hx-trigger="keyup changed delay:500ms"
+                                    hx-target="#product-list" name="product_search">
+                            </td>
+
+                            <!-- Batch Select -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <select name="batch_id[]" x-model="row.batchId"
+                                    class="shadow border rounded w-full py-1 px-2 text-sm max-w-xs"
+                                    :hx-get="'{% url 'get_batch_details' %}?batch_id=' + row.batchId"
+                                    :hx-target="'#batch-details-' + row.id" hx-trigger="change"
+                                    @htmx:after-swap="updateRowFromDOM($event, row)">
+                                    <option value="">Select Batch</option>
+                                    {% for batch in batches %}
+                                    <option value="{{ batch.id }}">{{ batch }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+
+                            <!-- Stock Details -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <div :id="'batch-details-' + row.id">
+                                    <span class="text-xs text-gray-400">Select...</span>
+                                </div>
+                            </td>
+
+                            <!-- Qty -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <input type="number" name="qty[]" x-model.number="row.qty" @input="calculateRow(row)"
+                                    class="shadow border rounded w-20 py-1 px-2 text-sm" required>
+                            </td>
+
+                            <!-- Refund Price -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <input type="number" step="0.01" name="price[]" x-model.number="row.price"
+                                    @input="calculateRow(row)" class="shadow border rounded w-24 py-1 px-2 text-sm">
+                            </td>
+
+                            <!-- Total -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span x-text="row.total.toFixed(2)" class="font-bold text-slate-700"></span>
+                            </td>
+
+                            <!-- Remove -->
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <button type="button" @click="removeRow(index)"
+                                    class="text-red-600 hover:text-red-900 font-bold">X</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <div class="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
+                <button type="button" @click="addRow()"
+                    class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                    + Add Item
+                </button>
+                <div class="text-xl font-bold">
+                    Total Refund: ₹<span x-text="grandTotal()"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-end">
+            <button type="submit"
+                class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded text-lg shadow-lg">
+                Process Return
+            </button>
+        </div>
+
+    </form>
+
+    <!-- Shared Datalist -->
+    <datalist id="product-list"></datalist>
+</div>
+
+<script>
+    function purchaseReturnForm() {
+        return {
+            rows: [
+                { id: Date.now(), batchId: '', qty: 1, price: 0, total: 0 }
+            ],
+            addRow() {
+                this.rows.push({ id: Date.now(), batchId: '', qty: 1, price: 0, total: 0 });
+                setTimeout(() => {
+                    htmx.process(document.body);
+                }, 100);
+            },
+            removeRow(index) {
+                this.rows.splice(index, 1);
+            },
+            calculateRow(row) {
+                row.total = row.qty * row.price;
+            },
+            grandTotal() {
+                return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2);
+            },
+            updateRowFromDOM(event, row) {
+                // For Purchase Return, default refund price could be 0 or populated if we had it.
+                // We rely on manual input or 'unit-price' hidden field if available (which is selling price, not cost).
+                // Ideally get_batch_details should return purchase_price too but I didn't verify that API fully here.
+                // Assuming manual entry is fine as per prompt "no MRP/Purchase Price" requested.
+            }
+        }
+    }
+</script>
+{% endblock %}

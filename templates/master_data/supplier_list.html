@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-slate-800">Suppliers</h1>
+        <a href="{% url 'supplier_add' %}" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+            + New Supplier
+        </a>
+    </div>
+
+    <!-- Search -->
+    <div class="bg-white p-4 rounded-lg shadow mb-6">
+        <form method="get" action=".">
+            <input type="text" name="q" value="{{ request.GET.q|default:'' }}" placeholder="Search by name or GSTIN..."
+                class="w-full md:w-1/3 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <button type="submit" class="hidden">Search</button>
+        </form>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto shadow-md rounded-lg mb-8">
+        <table class="min-w-full text-sm text-left text-gray-500">
+            <thead class="text-xs text-gray-700 uppercase bg-slate-100">
+                <tr>
+                    <th scope="col" class="px-6 py-3">Name</th>
+                    <th scope="col" class="px-6 py-3">GSTIN</th>
+                    <th scope="col" class="px-6 py-3">Phone / Address</th>
+                    <th scope="col" class="px-6 py-3 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for supplier in suppliers %}
+                <tr class="bg-white border-b hover:bg-gray-50">
+                    <td class="px-6 py-4 font-medium text-gray-900">
+                        {{ supplier.name }}
+                        {% if supplier.is_distributor %}
+                        <span
+                            class="bg-blue-100 text-blue-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded ml-2">Distributor</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4">{{ supplier.gstin }}</td>
+                    <td class="px-6 py-4">
+                        <div class="font-bold">{{ supplier.phone }}</div>
+                        <div class="text-xs text-gray-400">{{ supplier.address }}</div>
+                    </td>
+                    <td class="px-6 py-4 text-right space-x-2">
+                        <a href="{% url 'supplier_edit' supplier.pk %}"
+                            class="text-blue-600 hover:text-blue-900 font-bold">Edit</a>
+                        <a href="{% url 'supplier_delete' supplier.pk %}"
+                            class="text-red-600 hover:text-red-900 font-bold">Delete</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="px-6 py-4 text-center">No suppliers found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- Pagination -->
+        {% if is_paginated %}
+        <div class="px-6 py-4 bg-white border-t border-gray-200 flex justify-center">
+            <span class="step-links text-sm text-gray-700">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}"
+                    class="px-3 py-1 bg-slate-200 rounded hover:bg-slate-300">Previous</a>
+                {% endif %}
+
+                <span class="current px-3 font-bold">
+                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </span>
+
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}"
+                    class="px-3 py-1 bg-slate-200 rounded hover:bg-slate-300">Next</a>
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
