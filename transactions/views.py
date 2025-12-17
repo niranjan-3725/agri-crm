@@ -13,7 +13,8 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 from master_data.models import Product, Customer, Supplier, Category, Manufacturer
 from inventory.models import Batch
-from .models import SalesInvoice, SalesItem, PurchaseInvoice, PurchaseItem, PurchaseReturn, PurchaseReturnItem, SalesReturn, SalesReturnItem, SupplierPayment
+from .models import SalesInvoice, SalesItem, PurchaseInvoice, PurchaseItem, PurchaseReturn, PurchaseReturnItem, SalesReturn, SalesReturnItem, SupplierPayment, CustomerPayment
+from django.contrib import messages
 
 def search_products(request):
     query = request.GET.get('q', '')
@@ -32,6 +33,55 @@ def search_products(request):
         
     options = "".join([f'<option value="{p.name}"></option>' for p in products])
     return HttpResponse(options)
+
+def search_customers(request):
+    query = request.GET.get('q', '')
+    if query:
+        customers = Customer.objects.filter(
+            Q(name__icontains=query) | 
+            Q(mobile_no__icontains=query)
+        )[:20]
+    else:
+        customers = Customer.objects.all()[:20]
+    
+    data = [{
+        'id': c.id,
+        'name': c.name,
+        'mobile_no': c.mobile_no,
+        'city': c.city or ''
+    } for c in customers]
+    
+    return JsonResponse(data, safe=False)
+
+@csrf_exempt
+def create_customer_ajax(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            name = data.get('name')
+            mobile = data.get('mobile_no')
+            city = data.get('city')
+            
+            if not name or not mobile:
+                return JsonResponse({'error': 'Name and Mobile Number are required'}, status=400)
+                
+            customer = Customer.objects.create(
+                name=name,
+                mobile_no=mobile,
+                city=city,
+                address='' # Optional
+            )
+            
+            return JsonResponse({
+                'success': True,
+                'id': customer.id,
+                'name': customer.name,
+                'mobile_no': customer.mobile_no,
+                'city': customer.city
+            })
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    return JsonResponse({'error': 'Invalid method'}, status=405)
 
 def get_batch_details(request):
     batch_number = request.GET.get('batch_number')
@@ -62,6 +112,62 @@ def get_batch_details(request):
         return HttpResponse(html)
     except Batch.DoesNotExist:
         return HttpResponse("")
+
+def get_product_sizes(request):
+    product_id = request.GET.get('product_id')
+    if not product_id:
+        return JsonResponse([], safe=False)
+    
+    # Get distinct active sizes/units with valid stock
+    batches = Batch.objects.filter(
+        product_id=product_id, 
+        is_active=True, 
+        current_quantity__gt=0,
+        expiry_date__gt=timezone.now().date()
+    ).values('size', 'unit').distinct()
+    
+    data = [{
+        'size': float(b['size']),
+        'unit': b['unit'],
+        'label': f"{float(b['size'])} {b['unit']}"
+    } for b in batches]
+    
+    return JsonResponse(data, safe=False)
+
+def get_batches_for_product(request):
+    product_id = request.GET.get('product_id')
+    
+    if not product_id:
+        return JsonResponse([], safe=False)
+    
+    filters = {
+        'product_id': product_id,
+        'is_active': True,
+        'current_quantity__gt': 0,
+        'expiry_date__gt': timezone.now().date()
+    }
+    
+    # Optional Size/Unit filters
+    size = request.GET.get('size')
+    unit = request.GET.get('unit')
+    
+    if size:
+        filters['size'] = size
+    if unit:
+        filters['unit'] = unit
+    
+    batches = Batch.objects.filter(**filters).order_by('expiry_date')
+    
+    data = [{
+        'id': b.id,
+        'batch_number': b.batch_number,
+        'quantity': b.current_quantity,
+        'price': float(b.base_selling_price) if b.base_selling_price else 0,
+        'manufacturing_date': b.manufacturing_date,
+        'expiry_date': b.expiry_date
+    } for b in batches]
+    
+    return JsonResponse(data, safe=False)
 
 def create_sale(request):
     if request.method == 'POST':
@@ -134,6 +240,27 @@ def create_sale(request):
                 invoice.grand_total = grand_total
                 invoice.save()
                 
+                # Sprint 40: Payment Status Tracking
+                # Logic: Create CustomerPayment which triggers signal update_sales_invoice_payment_status
+                payment_status = request.POST.get('payment_status', 'UNPAID')
+                amount_rec_str = request.POST.get('amount_received')
+                
+                payment_amount = Decimal('0.00')
+                
+                if payment_status == 'PAID':
+                     payment_amount = invoice.grand_total
+                elif payment_status == 'PARTIAL' and amount_rec_str:
+                     payment_amount = Decimal(amount_rec_str)
+                
+                if payment_amount > 0:
+                    CustomerPayment.objects.create(
+                        invoice=invoice,
+                        amount=payment_amount,
+                        payment_date=invoice.date, # Assume payment on same date
+                        payment_mode='CASH', # Default for quick sale
+                        notes='Initial Payment via Sales Form'
+                    )
+                
                 return redirect('dashboard')
                 
         except ValidationError as e:
@@ -150,7 +277,7 @@ def create_sale(request):
     return render(request, 'transactions/sales_form.html', {'customers': customers, 'batches': batches})
 
 def sales_list(request):
-    invoices_list = SalesInvoice.objects.all().order_by('-date', '-id')
+    invoices_list = SalesInvoice.objects.select_related('customer').all().order_by('-date', '-id')
     
     # Filter
     query = request.GET.get('q')
@@ -989,3 +1116,34 @@ def create_product(request):
         })
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
+
+# Sprint 40: Customer Payments
+def record_receipt(request, pk):
+    invoice = get_object_or_404(SalesInvoice, pk=pk)
+    if request.method == 'POST':
+        try:
+            amount = request.POST.get('amount')
+            payment_mode = request.POST.get('payment_mode')
+            payment_date = request.POST.get('payment_date') or timezone.now().date()
+            notes = request.POST.get('notes')
+            
+            CustomerPayment.objects.create(
+                invoice=invoice,
+                amount=amount,
+                payment_mode=payment_mode,
+                payment_date=payment_date,
+                notes=notes
+            )
+            messages.success(request, f"Receipt of ₹{amount} recorded successfully.")
+        except Exception as e:
+            messages.error(request, f"Error recording receipt: {str(e)}")
+            
+    return redirect('invoice_detail', pk=pk)
+
+@require_POST
+def delete_customer_payment(request, pk):
+    payment = get_object_or_404(CustomerPayment, pk=pk)
+    invoice_pk = payment.invoice.pk
+    payment.delete()
+    # messages.success(request, "Receipt deleted successfully.") # messages not imported? using print/log or just redirect
+    return redirect('invoice_detail', pk=invoice_pk)

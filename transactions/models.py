@@ -114,7 +114,38 @@ class SalesInvoice(models.Model):
     total_sgst = models.DecimalField(max_digits=12, decimal_places=2)
     grand_total = models.DecimalField(max_digits=12, decimal_places=2)
 
-    def __str__(self):
+    # Sprint 40: Payment Tracking
+    PAYMENT_STATUS_CHOICES = [
+        ('UNPAID', 'Unpaid'),
+        ('PARTIAL', 'Partial'),
+        ('PAID', 'Paid'),
+    ]
+    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='UNPAID')
+    amount_received = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    due_date = models.DateField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        # Auto-set due date if not present (Default: Same day for now, can be +30)
+        if not self.due_date:
+             self.due_date = self.date
+
+        # Calculate balance due unless it is explicitly handled by signals (signals handle updates mainly)
+        # But for initial creation or direct edits:
+        self.grand_total = Decimal(str(self.grand_total))
+        self.amount_received = Decimal(str(self.amount_received))
+        self.balance_due = self.grand_total - self.amount_received
+        
+        # Determine status
+        if self.balance_due <= Decimal('0.01'):
+            self.payment_status = 'PAID'
+            if self.balance_due < 0: self.balance_due = 0
+        elif self.balance_due == self.grand_total:
+             self.payment_status = 'UNPAID'
+        else:
+             self.payment_status = 'PARTIAL'
+
+        super().save(*args, **kwargs)
         return f"Sales {self.invoice_number} to {self.customer}"
 
 class SalesItem(models.Model):
@@ -164,6 +195,25 @@ class PurchaseReturnItem(models.Model):
 
     def __str__(self):
         return f"Return {self.quantity} x {self.batch}"
+
+class CustomerPayment(models.Model):
+    PAYMENT_MODE_CHOICES = [
+        ('CASH', 'Cash'),
+        ('UPI', 'UPI'),
+        ('CHEQUE', 'Cheque'),
+        ('BANK', 'Bank Transfer'),
+    ]
+    
+    invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.CASCADE)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_date = models.DateField(default=timezone.now)
+    payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES, default='UPI')
+    reference_id = models.CharField(max_length=50, blank=True, null=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Receipt {self.amount} for {self.invoice.invoice_number}"
 
 class SalesReturn(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True)

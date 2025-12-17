@@ -2,7 +2,37 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
 from decimal import Decimal
-from .models import SupplierPayment
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+from django.db.models import Sum
+from decimal import Decimal
+from .models import SupplierPayment, CustomerPayment
+
+@receiver([post_save, post_delete], sender=CustomerPayment)
+def update_sales_invoice_payment_status(sender, instance, **kwargs):
+    invoice = instance.invoice
+    
+    # Calculate total received
+    total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+    
+    # Update fields
+    invoice.amount_received = total_received
+    invoice.balance_due = invoice.grand_total - total_received
+    
+    # Determine status
+    if invoice.balance_due <= Decimal('0.01'):
+        invoice.payment_status = 'PAID'
+        if invoice.balance_due < 0:
+            invoice.balance_due = 0
+    elif invoice.balance_due == invoice.grand_total:
+         if invoice.grand_total > 0:
+            invoice.payment_status = 'UNPAID'
+         else:
+            invoice.payment_status = 'PAID'
+    else:
+        invoice.payment_status = 'PARTIAL'
+        
+    invoice.save()
 
 @receiver([post_save, post_delete], sender=SupplierPayment)
 def update_invoice_payment_status(sender, instance, **kwargs):

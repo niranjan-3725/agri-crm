@@ -1,23 +1,145 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto">
-    <div class="bg-white shadow rounded-lg p-8">
-        <h1 class="text-2xl font-bold mb-6 text-slate-800">
+<div class="max-w-4xl mx-auto p-6 md:p-10 lg:p-12 pb-32">
+
+    <!-- Header Section -->
+    <header>
+        <nav class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
+            <span>CATALOG</span>
+            <span>•</span>
+            <span class="text-teal-600">{% if form.instance.pk %}EDIT{% else %}NEW{% endif %}</span>
+        </nav>
+        <h1 class="text-5xl font-bold tracking-tight text-gray-900">
             {% if form.instance.pk %}Edit Category{% else %}New Category{% endif %}
         </h1>
+    </header>
 
-        <form method="post" class="space-y-4">
+    <!-- Form Card -->
+    <div
+        class="bg-white rounded-[2.5rem] p-10 md:p-12 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.02)] border border-gray-100 mt-8">
+
+        <form method="post" class="space-y-8" novalidate>
             {% csrf_token %}
-            {{ form.as_p }}
 
-            <div class="flex items-center justify-end space-x-4 mt-8 pt-4 border-t">
-                <a href="{% url 'category_list' %}" class="text-gray-600 hover:text-gray-800 font-bold">Cancel</a>
-                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded">
-                    Save Category
+            <!-- Row 1: Name -->
+            <div class="grid grid-cols-1 gap-8">
+                <div>
+                    <label for="{{ form.name.id_for_label }}"
+                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
+                        {{ form.name.label }}
+                    </label>
+                    {{ form.name }}
+                    {% if form.name.errors %}
+                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.name.errors.0 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Row 2: Tax Rates (3 Columns) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div>
+                    <label for="{{ form.cgst_rate.id_for_label }}"
+                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
+                        {{ form.cgst_rate.label }}
+                    </label>
+                    {{ form.cgst_rate }}
+                    {% if form.cgst_rate.errors %}
+                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.cgst_rate.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    <label for="{{ form.sgst_rate.id_for_label }}"
+                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
+                        {{ form.sgst_rate.label }}
+                    </label>
+                    {{ form.sgst_rate }}
+                    {% if form.sgst_rate.errors %}
+                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.sgst_rate.errors.0 }}</p>
+                    {% endif %}
+                </div>
+                <div>
+                    <label for="{{ form.igst_rate.id_for_label }}"
+                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
+                        {{ form.igst_rate.label }}
+                    </label>
+                    {{ form.igst_rate }}
+                    {% if form.igst_rate.errors %}
+                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.igst_rate.errors.0 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Action Bar -->
+            <div class="flex items-center justify-end gap-6 mt-12 pt-8 border-t border-gray-50">
+                <a href="{% url 'category_list' %}"
+                    class="text-gray-400 hover:text-gray-900 font-bold transition-colors">
+                    Cancel
+                </a>
+                <button type="submit"
+                    class="bg-gray-900 hover:bg-black text-white h-14 px-8 rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/10 hover:shadow-gray-900/20 active:scale-95 transition-all flex items-center gap-3">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <span>Save Category</span>
                 </button>
             </div>
+
         </form>
     </div>
 </div>
+
+<style>
+    /* Custom Input Style for Teal Theme */
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+        width: 100%;
+        height: 3.5rem;
+        /* h-14 */
+        background-color: #f9fafb;
+        /* bg-gray-50 */
+        border-width: 1px;
+        border-color: transparent;
+        border-radius: 1rem;
+        /* rounded-2xl */
+        padding-left: 1.25rem;
+        /* px-5 */
+        padding-right: 1.25rem;
+        font-size: 1rem;
+        /* text-base */
+        font-weight: 500;
+        /* font-medium */
+        transition-property: all;
+        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+        transition-duration: 150ms;
+        outline: 2px solid transparent;
+        outline-offset: 2px;
+    }
+
+    input[type="text"]:hover,
+    input[type="number"]:hover,
+    select:hover,
+    textarea:hover {
+        background-color: #ffffff;
+        border-color: #e5e7eb;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus,
+    textarea:focus {
+        background-color: #ffffff;
+        border-color: rgb(20 184 166 / 0.2);
+        /* focus:border-teal-500/20 */
+        --tw-shadow: 0 10px 15px -3px rgb(20 184 166 / 0.05), 0 4px 6px -4px rgb(20 184 166 / 0.05);
+        /* focus:shadow-teal-500/5 */
+        box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+    }
+
+    input::placeholder {
+        color: #d1d5db;
+    }
+</style>
 {% endblock %}

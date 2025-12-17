@@ -7,6 +7,7 @@ urlpatterns = [
     path('customers/add/', views.CustomerCreateView.as_view(), name='customer_add'),
     path('customers/<int:pk>/edit/', views.CustomerUpdateView.as_view(), name='customer_edit'),
     path('customers/<int:pk>/delete/', views.CustomerDeleteView.as_view(), name='customer_delete'),
+    path('customers/export/', views.export_customers, name='customer_export'),
 
     # Supplier URLs
     path('suppliers/', views.SupplierListView.as_view(), name='supplier_list'),

@@ -54,6 +54,7 @@ class Customer(models.Model):
     city = models.CharField(max_length=100, null=True, blank=True, verbose_name="City/Village")
     address = models.TextField()
     gstin = models.CharField(max_length=50, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name

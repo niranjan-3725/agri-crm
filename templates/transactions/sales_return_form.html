@@ -1,146 +1,203 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto" x-data="salesReturnForm()">
-    <h1 class="text-3xl font-bold mb-8 text-slate-800">Sales Return (Inward)</h1>
+<div x-data="salesReturnLogic()" class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]">
 
-    {% if error %}
-    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-        <strong class="font-bold">Error!</strong>
-        <span class="block sm:inline">{{ error }}</span>
-    </div>
-    {% endif %}
+    <!-- LEFT: Main Form Area -->
+    <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32">
+        <div class="max-w-5xl mx-auto space-y-8">
 
-    <form method="POST" action="{% url 'create_sales_return' %}">
-        {% csrf_token %}
-
-        <!-- Header -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 bg-white p-6 rounded shadow">
-            <div>
-                <label class="block text-gray-700 text-sm font-bold mb-2">Customer</label>
-                <select name="customer"
-                    class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                    <option value="">-- Select Customer --</option>
-                    {% for customer in customers %}
-                    <option value="{{ customer.id }}">{{ customer.name }} ({{ customer.city|default:"" }}) - {{
-                        customer.mobile_no }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label class="block text-gray-700 text-sm font-bold mb-2">Date</label>
-                <input type="date" name="date"
-                    class="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                    value="{% now 'Y-m-d' %}">
-            </div>
-        </div>
-
-        <!-- Items Table -->
-        <div class="bg-white rounded shadow overflow-x-auto mb-8">
-            <table class="min-w-full">
-                <thead class="bg-slate-50">
-                    <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Product Search</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Batch
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Refund Details</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty
-                        </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Refund Rate</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total
-                            Refund</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Action</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    <template x-for="(row, index) in rows" :key="row.id">
-                        <tr>
-                            <!-- Product Search -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <input type="text" placeholder="Type to search..."
-                                    class="shadow border rounded w-full py-1 px-2 text-sm" list="product-list"
-                                    hx-get="{% url 'search_products' %}" hx-trigger="keyup changed delay:500ms"
-                                    hx-target="#product-list" name="product_search">
-                            </td>
-
-                            <!-- Batch Select -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <select name="batch_id[]" x-model="row.batchId"
-                                    class="shadow border rounded w-full py-1 px-2 text-sm max-w-xs"
-                                    :hx-get="'{% url 'get_batch_details' %}?batch_id=' + row.batchId"
-                                    :hx-target="'#batch-details-' + row.id" hx-trigger="change"
-                                    @htmx:after-swap="updateRowFromDOM($event, row)">
-                                    <option value="">Select Batch</option>
-                                    {% for batch in batches %}
-                                    <option value="{{ batch.id }}">{{ batch }}</option>
-                                    {% endfor %}
-                                </select>
-                            </td>
-
-                            <!-- Details (Hidden + Display) -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <div :id="'batch-details-' + row.id">
-                                    <span class="text-xs text-gray-400">Select a batch...</span>
-                                </div>
-                            </td>
-
-                            <!-- Qty -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <input type="number" name="qty[]" x-model.number="row.qty" @input="calculateRow(row)"
-                                    class="shadow border rounded w-20 py-1 px-2 text-sm">
-                            </td>
-
-                            <!-- Refund Price -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <input type="number" step="0.01" name="price[]" x-model.number="row.price"
-                                    @input="calculateRow(row)" class="shadow border rounded w-24 py-1 px-2 text-sm">
-                            </td>
-
-                            <!-- Total -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <span x-text="row.total.toFixed(2)" class="font-bold text-slate-700"></span>
-                            </td>
-
-                            <!-- Remove -->
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                <button type="button" @click="removeRow(index)"
-                                    class="text-red-600 hover:text-red-900 font-bold">X</button>
-                            </td>
-                        </tr>
-                    </template>
-                </tbody>
-            </table>
-
-            <div class="px-6 py-4 bg-gray-50 border-t flex justify-between items-center">
-                <button type="button" @click="addRow()"
-                    class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-                    + Add Item
-                </button>
-                <div class="text-xl font-bold">
-                    Total Refund: ₹<span x-text="grandTotal()"></span>
+            <!-- Header -->
+            <header class="flex flex-col gap-2">
+                <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+                    <span class="bg-amber-50 text-amber-600 px-2 py-1 rounded">Sales</span>
+                    <span>•</span>
+                    <span>Return</span>
                 </div>
+                <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">Sales Return</h1>
+                <p class="text-gray-500">Process customer returns and refunds</p>
+            </header>
+
+            {% if error %}
+            <div class="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-2xl" role="alert">
+                <strong class="font-bold">Error!</strong>
+                <span class="block sm:inline">{{ error }}</span>
             </div>
-        </div>
+            {% endif %}
 
-        <div class="flex justify-end">
-            <button type="submit"
-                class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-8 rounded text-lg shadow-lg">
-                Process Return
-            </button>
-        </div>
+            <form method="POST" action="{% url 'create_sales_return' %}">
+                {% csrf_token %}
 
-    </form>
+                <!-- Master Fields Card -->
+                <div
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div>
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Customer</label>
+                        <select name="customer"
+                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
+                            <option value="">-- Select Customer --</option>
+                            {% for customer in customers %}
+                            <option value="{{ customer.id }}">{{ customer.name }} ({{ customer.city|default:"" }}) - {{
+                                customer.mobile_no }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Date</label>
+                        <input type="date" name="date" value="{% now 'Y-m-d' %}"
+                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
+                    </div>
+                </div>
+
+                <!-- Items Section -->
+                <div class="space-y-4">
+                    <template x-for="(row, i) in rows" :key="row.id">
+                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative">
+                            <!-- Remove Button -->
+                            <button type="button" @click="removeRow(i)"
+                                class="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+
+                            <!-- Row 1: Product Search -->
+                            <div class="mb-4">
+                                <label
+                                    class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Product
+                                    Search</label>
+                                <input type="text" placeholder="Type to search products..." list="product-list"
+                                    hx-get="{% url 'search_products' %}" hx-trigger="keyup changed delay:500ms"
+                                    hx-target="#product-list" name="product_search"
+                                    class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+                            </div>
+
+                            <!-- Row 2: Batch, Stock, Qty, Rate -->
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Batch</label>
+                                    <select name="batch_id[]" x-model="row.batchId"
+                                        :hx-get="'{% url 'get_batch_details' %}?batch_id=' + row.batchId"
+                                        :hx-target="'#batch-details-' + row.id" hx-trigger="change"
+                                        @htmx:after-swap="updateRowFromDOM($event, row)"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
+                                        <option value="">Select Batch</option>
+                                        {% for batch in batches %}
+                                        <option value="{{ batch.id }}">{{ batch }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Stock
+                                        Info</label>
+                                    <div :id="'batch-details-' + row.id"
+                                        class="h-12 bg-gray-100 rounded-xl px-4 flex items-center text-sm text-gray-500">
+                                        <span>Select a batch...</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Quantity</label>
+                                    <input type="number" name="qty[]" x-model.number="row.qty"
+                                        @input="calculateRow(row)" min="1"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center">
+                                </div>
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Refund
+                                        Rate</label>
+                                    <input type="number" step="0.01" name="price[]" x-model.number="row.price"
+                                        @input="calculateRow(row)"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center">
+                                </div>
+                            </div>
+
+                            <!-- Row Total (Small display) -->
+                            <div class="mt-4 pt-4 border-t border-gray-50 flex justify-end">
+                                <div class="text-right">
+                                    <span class="text-xs text-gray-400 uppercase">Item Total</span>
+                                    <div class="text-lg font-bold text-gray-900">&#8377;<span
+                                            x-text="row.total.toFixed(2)"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Add Item Button -->
+                    <button type="button" @click="addRow()"
+                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/50 transition-all font-bold flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path d="M12 4v16m8-8H4"></path>
+                        </svg>
+                        Add Another Item
+                    </button>
+                </div>
+
+                <!-- Hidden submit for form (actual button in sidebar) -->
+                <button type="submit" id="main-submit-btn" class="hidden">Submit</button>
+            </form>
+
+        </div>
+    </main>
+
+    <!-- RIGHT: Sticky Summary Sidebar -->
+    <aside class="xl:w-[420px] bg-white border-l border-gray-100 z-40 relative">
+        <div class="xl:fixed xl:w-[420px] h-full flex flex-col">
+
+            <div class="p-8 pb-4 border-b border-gray-50 hidden xl:block">
+                <h2 class="text-lg font-bold text-gray-900">Refund Summary</h2>
+                <p class="text-sm text-gray-400 mt-1">Review before processing</p>
+            </div>
+
+            <div class="flex-1 p-8 space-y-6 overflow-y-auto">
+
+                <!-- Summary Stats -->
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center py-3 border-b border-gray-50">
+                        <span class="text-gray-500">Total Items</span>
+                        <span class="font-bold text-gray-900" x-text="rows.length"></span>
+                    </div>
+                    <div class="flex justify-between items-center py-3 border-b border-gray-50">
+                        <span class="text-gray-500">Total Quantity</span>
+                        <span class="font-bold text-gray-900" x-text="totalQty()"></span>
+                    </div>
+                </div>
+
+                <!-- Grand Total -->
+                <div class="bg-amber-50/50 rounded-2xl p-6 border border-amber-100">
+                    <div class="text-xs font-bold uppercase tracking-widest text-amber-600 mb-2">Total Refund</div>
+                    <div class="text-4xl font-bold text-gray-900">&#8377;<span x-text="grandTotal()"></span></div>
+                </div>
+
+            </div>
+
+            <!-- Action Button -->
+            <div class="p-8 pt-4 border-t border-gray-50">
+                <button type="button" @click="document.getElementById('main-submit-btn').click()"
+                    class="bg-amber-500 hover:bg-amber-600 text-white w-full py-5 rounded-2xl font-bold text-lg shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3">
+                    <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Process Return
+                </button>
+            </div>
+
+        </div>
+    </aside>
 
     <!-- Shared Datalist -->
     <datalist id="product-list"></datalist>
+
 </div>
 
 <script>
-    function salesReturnForm() {
+    function salesReturnLogic() {
         return {
             rows: [
                 { id: Date.now(), batchId: '', qty: 1, price: 0, total: 0 }
@@ -152,19 +209,22 @@
                 }, 100);
             },
             removeRow(index) {
-                this.rows.splice(index, 1);
+                if (this.rows.length > 1) {
+                    this.rows.splice(index, 1);
+                }
             },
             calculateRow(row) {
                 row.total = row.qty * row.price;
+            },
+            totalQty() {
+                return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0);
             },
             grandTotal() {
                 return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2);
             },
             updateRowFromDOM(event, row) {
-                // When selecting batch for return, we might auto-fill the current selling price as default refund price
                 const container = event.target;
                 const unitPrice = container.querySelector('.unit-price')?.value;
-
                 if (unitPrice) {
                     row.price = parseFloat(unitPrice);
                     this.calculateRow(row);

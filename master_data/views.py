@@ -1,11 +1,13 @@
 from django.shortcuts import render
 from django.http import HttpResponse
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Sum
 from django.urls import reverse_lazy
 from django.views.generic import ListView, CreateView, UpdateView, DeleteView
 from django.utils import timezone
+import csv
 from .models import Customer, Supplier
 from .forms import CustomerForm, SupplierForm
+from transactions.models import PurchaseInvoice
 
 # --- Customer Views ---
 
@@ -14,6 +16,13 @@ class CustomerListView(ListView):
     template_name = 'master_data/customer_list.html'
     context_object_name = 'customers'
     paginate_by = 20
+
+    def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        context = self.get_context_data(object_list=self.object_list)
+        if request.headers.get('HX-Request'):
+            return render(request, 'master_data/partials/customer_table.html', context)
+        return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = super().get_queryset().order_by('name')
@@ -34,9 +43,7 @@ class CustomerListView(ListView):
         # New customers this month
         now = timezone.now()
         first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # Since Customer model doesn't have created_at, we'll estimate or show 0
-        # For now, show a placeholder - you can add a created_at field later
-        context['new_this_month'] = 0  # Placeholder
+        context['new_this_month'] = Customer.objects.filter(created_at__gte=first_of_month).count()
         
         # Top cities by customer count
         context['top_cities'] = (
@@ -67,6 +74,25 @@ class CustomerDeleteView(DeleteView):
     template_name = 'master_data/customer_confirm_delete.html'
     success_url = reverse_lazy('customer_list')
 
+def export_customers(request):
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="customer_list.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(['Customer Name', 'Mobile Number', 'City/Village', 'Address', 'GSTIN'])
+
+    customers = Customer.objects.all().order_by('name')
+    for customer in customers:
+        writer.writerow([
+            customer.name,
+            customer.mobile_no,
+            customer.city or '',
+            customer.address,
+            customer.gstin or ''
+        ])
+
+    return response
+
 # --- Supplier Views ---
 
 class SupplierListView(ListView):
@@ -74,6 +100,13 @@ class SupplierListView(ListView):
     template_name = 'master_data/supplier_list.html'
     context_object_name = 'suppliers'
     paginate_by = 20
+
+    def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        context = self.get_context_data(object_list=self.object_list)
+        if request.headers.get('HX-Request'):
+            return render(request, 'master_data/partials/supplier_table.html', context)
+        return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = super().get_queryset().order_by('name')
@@ -84,6 +117,21 @@ class SupplierListView(ListView):
                 Q(gstin__icontains=q)
             )
         return queryset
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Stats
+        context['total_suppliers'] = Supplier.objects.count()
+        
+        # Total Payables (from Transactions)
+        total_payables = PurchaseInvoice.objects.aggregate(total=Sum('balance_due'))['total'] or 0
+        context['total_payables'] = total_payables
+        
+        # Top Distributors
+        context['top_distributors'] = Supplier.objects.filter(is_distributor=True).order_by('name')[:5]
+        
+        return context
 
 class SupplierCreateView(CreateView):
     model = Supplier
@@ -112,12 +160,35 @@ class ProductListView(ListView):
     context_object_name = 'products'
     paginate_by = 20
 
+    def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        context = self.get_context_data(object_list=self.object_list)
+        if request.headers.get('HX-Request'):
+            return render(request, 'master_data/partials/product_table.html', context)
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset().select_related('category', 'manufacturer').order_by('name')
         q = self.request.GET.get('q')
         if q:
             queryset = queryset.filter(name__icontains=q)
         return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Stats
+        context['total_products'] = Product.objects.count()
+        
+        # Top Categories by Product Count
+        context['category_counts'] = (
+            Category.objects
+            .annotate(product_count=Count('products'))
+            .filter(product_count__gt=0)
+            .order_by('-product_count')[:5]
+        )
+        
+        return context
 
 class ProductCreateView(CreateView):
     model = Product
@@ -172,8 +243,19 @@ class CategoryListView(ListView):
     template_name = 'master_data/category_list.html'
     context_object_name = 'categories'
     
+    def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        context = self.get_context_data(object_list=self.object_list)
+        if request.headers.get('HX-Request'):
+            return render(request, 'master_data/partials/category_grid.html', context)
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
-         return super().get_queryset().order_by('name')
+         queryset = super().get_queryset().order_by('name')
+         q = self.request.GET.get('q')
+         if q:
+             queryset = queryset.filter(name__icontains=q)
+         return queryset
 
 class CategoryCreateView(CreateView):
     model = Category
@@ -201,8 +283,24 @@ class ManufacturerListView(ListView):
     template_name = 'master_data/manufacturer_list.html'
     context_object_name = 'manufacturers'
 
+    def get(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        context = self.get_context_data(object_list=self.object_list)
+        if request.headers.get('HX-Request'):
+            return render(request, 'master_data/partials/manufacturer_grid.html', context)
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
-         return super().get_queryset().order_by('name')
+         queryset = super().get_queryset().order_by('name')
+         q = self.request.GET.get('q')
+         if q:
+             queryset = queryset.filter(name__icontains=q)
+         return queryset
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['recent_manufacturers'] = Manufacturer.objects.order_by('-id')[:5]
+        return context
 
 class ManufacturerCreateView(CreateView):
     model = Manufacturer

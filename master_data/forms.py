@@ -14,6 +14,31 @@ class CustomerForm(StyledFormMixin, forms.ModelForm):
         model = Customer
         fields = ['name', 'mobile_no', 'city', 'address', 'gstin']
 
+    def clean_mobile_no(self):
+        mobile_no = self.cleaned_data.get('mobile_no')
+        if not mobile_no:
+            return mobile_no
+
+        # Format Validation: Digits only
+        if not mobile_no.isdigit():
+            raise forms.ValidationError("Mobile number must contain only digits.")
+
+        # Length Validation: Exactly 10
+        if len(mobile_no) != 10:
+            raise forms.ValidationError("Mobile number must be exactly 10 digits.")
+
+        # Uniqueness Validation
+        # Check if any OTHER customer has this number
+        # If self.instance.pk is set, we are editing, so we exclude the current record
+        query = Customer.objects.filter(mobile_no=mobile_no)
+        if self.instance.pk:
+            query = query.exclude(pk=self.instance.pk)
+
+        if query.exists():
+            raise forms.ValidationError("Customer with this mobile number already exists.")
+
+        return mobile_no
+
 class SupplierForm(StyledFormMixin, forms.ModelForm):
     class Meta:
         model = Supplier
