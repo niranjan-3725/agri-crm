@@ -125,6 +125,11 @@ class SalesInvoice(models.Model):
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_date = models.DateField(null=True, blank=True)
 
+    @property
+    def total_tax(self):
+        """Returns the sum of CGST and SGST as total tax."""
+        return (self.total_cgst or Decimal('0')) + (self.total_sgst or Decimal('0'))
+
     def save(self, *args, **kwargs):
         # Auto-set due date if not present (Default: Same day for now, can be +30)
         if not self.due_date:

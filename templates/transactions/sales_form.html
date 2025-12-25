@@ -13,10 +13,12 @@
                 <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
                     <span class="bg-green-50 text-green-600 px-2 py-1 rounded">Transactions</span>
                     <span>•</span>
-                    <span>New Sale</span>
+                    <span>{% if invoice %}Edit Sale{% else %}New Sale{% endif %}</span>
                 </div>
-                <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">New Sale</h1>
-                <p class="text-gray-500">Create a new sales invoice</p>
+                <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">{% if invoice %}Edit Sale{% else
+                    %}New Sale{% endif %}</h1>
+                <p class="text-gray-500">{% if invoice %}Modify sales invoice #{{ invoice.invoice_number }}{% else
+                    %}Create a new sales invoice{% endif %}</p>
             </header>
 
             {% if error %}
@@ -26,7 +28,9 @@
             </div>
             {% endif %}
 
-            <form method="POST" action="{% url 'create_sale' %}" id="sales-form">
+            <form method="POST"
+                action="{% if invoice %}{% url 'edit_sale' invoice.pk %}{% else %}{% url 'create_sale' %}{% endif %}"
+                id="sales-form">
                 {% csrf_token %}
 
                 <!-- Master Fields Card -->
@@ -69,7 +73,8 @@
                     <div>
                         <label
                             class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Date</label>
-                        <input type="date" name="date" value="{% now 'Y-m-d' %}"
+                        <input type="date" name="date"
+                            value="{% if invoice %}{{ invoice.date|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}"
                             class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-green-500/20 focus:bg-white outline-none transition-all">
                     </div>
                 </div>
@@ -334,191 +339,226 @@
 
 <script>
     function salesForm() {
-        return {
-            // Customer Search State
-            customerSearch: '',
-            customerId: '',
-            customerOpen: false,
-            customerResults: [],
+        // Get existing data from Django context (for edit mode)
+        const existingItems = {{ existing_items_json| safe |default: "[]"
+    }};
+    const existingCustomer = {% if invoice and invoice.customer %}{ id: { { invoice.customer.id } }, name: "{{ invoice.customer.name }}", city: "{{ invoice.customer.city|default:'' }}", mobile_no: "{{ invoice.customer.mobile_no|default:'' }}" } {% else %} null{% endif %};
 
-            // New Customer Modal State
-            showCustomerModal: false,
-            newCustomerName: '',
-            newCustomerMobile: '',
-            newCustomerCity: '',
+    // Build rows from existing items or create empty row
+    let initialRows = [];
+    if (existingItems.length > 0) {
+        initialRows = existingItems.map((item, idx) => ({
+            id: Date.now() + idx,
+            productName: item.product_name || '',
+            productId: item.product_id || '',
+            productOpen: false,
+            productResults: [],
+            sizes: item.size_label ? [{ size: item.size, unit: item.unit, label: item.size_label }] : [],
+            selectedSizeIdx: item.size_label ? 0 : '',
+            batches: [{ id: item.batch_id, batch_number: item.batch_number, quantity: item.current_stock, price: item.price, manufacturing_date: item.mfg_date, expiry_date: item.expiry_date }],
+            batchId: item.batch_id || '',
+            stock: item.current_stock || 0,
+            qty: item.qty || 1,
+            price: item.price || 0,
+            total: item.total || 0,
+            mfgDate: item.mfg_date || '',
+            expDate: item.expiry_date || ''
+        }));
+    } else {
+        initialRows = [{
+            id: Date.now(),
+            productName: '',
+            productId: '',
+            productOpen: false,
+            productResults: [],
+            sizes: [],
+            selectedSizeIdx: '',
+            batches: [],
+            batchId: '',
+            stock: 0,
+            qty: 1,
+            price: 0,
+            total: 0,
+            mfgDate: '',
+            expDate: ''
+        }];
+    }
 
-            rows: [
-                {
-                    id: Date.now(),
-                    productName: '',
-                    productId: '',
-                    productOpen: false,
-                    productResults: [],
-                    batches: [],
-                    batchId: '',
-                    stock: 0,
-                    qty: 1,
-                    price: 0,
-                    total: 0
-                }
-            ],
-            paymentStatus: 'PAID',
-            amountReceived: 0,
+    return {
+        // Customer Search State
+        customerSearch: existingCustomer ? `${existingCustomer.name} (${existingCustomer.city}) - ${existingCustomer.mobile_no}` : '',
+        customerId: existingCustomer ? existingCustomer.id : '',
+        customerOpen: false,
+        customerResults: [],
 
-            // Customer Methods
-            async searchCustomers() {
-                if (this.customerSearch.length < 2) {
-                    this.customerResults = [];
-                    return;
-                }
-                const res = await fetch(`{% url 'search_customers' %}?q=${this.customerSearch}`);
-                this.customerResults = await res.json();
-                this.customerOpen = true;
-            },
-            selectCustomer(c) {
-                this.customerId = c.id;
-                this.customerSearch = `${c.name} (${c.city}) - ${c.mobile_no}`;
-                this.customerOpen = false;
-            },
-            openCustomerModal() {
-                this.newCustomerName = this.customerSearch;
-                this.showCustomerModal = true;
-                this.customerOpen = false;
-            },
-            async saveNewCustomer() {
-                if (!this.newCustomerName || !this.newCustomerMobile) {
-                    alert('Name and Mobile are required');
-                    return;
-                }
-                const res = await fetch("{% url 'create_customer_ajax' %}", {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-                    },
-                    body: JSON.stringify({
-                        name: this.newCustomerName,
-                        mobile_no: this.newCustomerMobile,
-                        city: this.newCustomerCity
-                    })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    this.selectCustomer(data);
-                    this.showCustomerModal = false;
-                    // Reset
-                    this.newCustomerName = '';
-                    this.newCustomerMobile = '';
-                    this.newCustomerCity = '';
-                } else {
-                    alert(data.error || 'Failed to create customer');
-                }
-            },
+        // New Customer Modal State
+        showCustomerModal: false,
+        newCustomerName: '',
+        newCustomerMobile: '',
+        newCustomerCity: '',
 
-            // Row Methods
-            async searchProducts(row) {
-                if (row.productName.length < 2) {
-                    row.productResults = [];
-                    return;
-                }
-                const res = await fetch(`{% url 'search_products' %}?q=${row.productName}&format=json`);
-                row.productResults = await res.json();
-                row.productOpen = true;
-            },
-            async selectProduct(row, p) {
-                row.productId = p.id;
-                row.productName = p.name;
-                row.productOpen = false;
+        rows: initialRows,
+        paymentStatus: {% if invoice %}'{{ invoice.payment_status }}'{% else %} 'PAID'{% endif %},
+    amountReceived: {% if invoice %} { { invoice.amount_received |default: 0 } } {% else %} 0{% endif %},
 
-                // Reset downstream
-                row.sizes = [];
-                row.selectedSizeIdx = '';
-                row.batches = [];
-                row.batchId = '';
-                row.stock = 0;
-                row.price = 0;
-                row.mfgDate = '';
-                row.expDate = '';
-
-                // Fetch Sizes
-                const res = await fetch(`{% url 'get_product_sizes' %}?product_id=${p.id}`);
-                row.sizes = await res.json();
-            },
-            async selectSize(row) {
-                // Reset downstream
-                row.batches = [];
-                row.batchId = '';
-                row.stock = 0;
-                row.price = 0;
-                row.mfgDate = '';
-                row.expDate = '';
-
-                if (row.selectedSizeIdx === '') return;
-
-                const sizeObj = row.sizes[row.selectedSizeIdx];
-                const res = await fetch(`{% url 'get_batches_for_product' %}?product_id=${row.productId}&size=${sizeObj.size}&unit=${sizeObj.unit}`);
-                row.batches = await res.json();
-            },
-            selectBatch(row) {
-                const batch = row.batches.find(b => b.id == row.batchId);
-                if (batch) {
-                    row.stock = batch.quantity;
-                    row.price = batch.price;
-                    row.mfgDate = batch.manufacturing_date || '';
-                    row.expDate = batch.expiry_date || '';
-                } else {
-                    row.stock = 0;
-                    row.price = 0;
-                    row.mfgDate = '';
-                    row.expDate = '';
-                }
-                this.calculateRow(row);
-            },
-
-            addRow() {
-                this.rows.push({
-                    id: Date.now(),
-                    productName: '',
-                    productId: '',
-                    productOpen: false,
-                    productResults: [],
-                    batches: [],
-                    batchId: '',
-                    stock: 0,
-                    qty: 1,
-                    price: 0,
-                    total: 0
-                });
-            },
-            removeRow(index) {
-                if (this.rows.length > 1) {
-                    this.rows.splice(index, 1);
-                }
-            },
-            calculateRow(row) {
-                // Validate Quantity
-                if (row.qty < 0) {
-                    row.qty = 0;
-                }
-                // Only enforce max stock if stock is known/loaded
-                if (row.stock > 0 && row.qty > row.stock) {
-                    // Alert user briefly? Or just clamp?
-                    // Clamping is requested "shouldn't be greater"
-                    row.qty = row.stock;
-                }
-
-                row.total = row.qty * row.price;
-                if (this.paymentStatus === 'PAID') {
-                    this.amountReceived = parseFloat(this.grandTotal());
-                }
-            },
-            totalQty() {
-                return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0);
-            },
-            grandTotal() {
-                return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2);
-            }
+        // Customer Methods
+        async searchCustomers() {
+        if (this.customerSearch.length < 2) {
+            this.customerResults = [];
+            return;
         }
+        const res = await fetch(`{% url 'search_customers' %}?q=${this.customerSearch}`);
+        this.customerResults = await res.json();
+        this.customerOpen = true;
+    },
+    selectCustomer(c) {
+        this.customerId = c.id;
+        this.customerSearch = `${c.name} (${c.city}) - ${c.mobile_no}`;
+        this.customerOpen = false;
+    },
+    openCustomerModal() {
+        this.newCustomerName = this.customerSearch;
+        this.showCustomerModal = true;
+        this.customerOpen = false;
+    },
+        async saveNewCustomer() {
+        if (!this.newCustomerName || !this.newCustomerMobile) {
+            alert('Name and Mobile are required');
+            return;
+        }
+        const res = await fetch("{% url 'create_customer_ajax' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: JSON.stringify({
+                name: this.newCustomerName,
+                mobile_no: this.newCustomerMobile,
+                city: this.newCustomerCity
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            this.selectCustomer(data);
+            this.showCustomerModal = false;
+            // Reset
+            this.newCustomerName = '';
+            this.newCustomerMobile = '';
+            this.newCustomerCity = '';
+        } else {
+            alert(data.error || 'Failed to create customer');
+        }
+
+    },
+
+        // Row Methods
+        async searchProducts(row) {
+        if (row.productName.length < 2) {
+            row.productResults = [];
+            return;
+        }
+        const res = await fetch(`{% url 'search_products' %}?q=${row.productName}&format=json`);
+        row.productResults = await res.json();
+        row.productOpen = true;
+    },
+        async selectProduct(row, p) {
+        row.productId = p.id;
+        row.productName = p.name;
+        row.productOpen = false;
+
+        // Reset downstream
+        row.sizes = [];
+        row.selectedSizeIdx = '';
+        row.batches = [];
+        row.batchId = '';
+        row.stock = 0;
+        row.price = 0;
+        row.mfgDate = '';
+        row.expDate = '';
+
+        // Fetch Sizes
+        const res = await fetch(`{% url 'get_product_sizes' %}?product_id=${p.id}`);
+        row.sizes = await res.json();
+    },
+        async selectSize(row) {
+        // Reset downstream
+        row.batches = [];
+        row.batchId = '';
+        row.stock = 0;
+        row.price = 0;
+        row.mfgDate = '';
+        row.expDate = '';
+
+        if (row.selectedSizeIdx === '') return;
+
+        const sizeObj = row.sizes[row.selectedSizeIdx];
+        const res = await fetch(`{% url 'get_batches_for_product' %}?product_id=${row.productId}&size=${sizeObj.size}&unit=${sizeObj.unit}`);
+        row.batches = await res.json();
+    },
+    selectBatch(row) {
+        const batch = row.batches.find(b => b.id == row.batchId);
+        if (batch) {
+            row.stock = batch.quantity;
+            row.price = batch.price;
+            row.mfgDate = batch.manufacturing_date || '';
+            row.expDate = batch.expiry_date || '';
+        } else {
+            row.stock = 0;
+            row.price = 0;
+            row.mfgDate = '';
+            row.expDate = '';
+        }
+        this.calculateRow(row);
+    },
+
+    addRow() {
+        this.rows.push({
+            id: Date.now(),
+            productName: '',
+            productId: '',
+            productOpen: false,
+            productResults: [],
+            sizes: [],
+            selectedSizeIdx: '',
+            batches: [],
+            batchId: '',
+            stock: 0,
+            qty: 1,
+            price: 0,
+            total: 0
+        });
+    },
+    removeRow(index) {
+        if (this.rows.length > 1) {
+            this.rows.splice(index, 1);
+
+        }
+    },
+    calculateRow(row) {
+        // Validate Quantity
+        if (row.qty < 0) {
+            row.qty = 0;
+        }
+        // Only enforce max stock if stock is known/loaded
+        if (row.stock > 0 && row.qty > row.stock) {
+            // Alert user briefly? Or just clamp?
+            // Clamping is requested "shouldn't be greater"
+            row.qty = row.stock;
+        }
+
+        row.total = row.qty * row.price;
+        if (this.paymentStatus === 'PAID') {
+            this.amountReceived = parseFloat(this.grandTotal());
+
+        }
+    },
+    totalQty() {
+        return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0);
+    },
+    grandTotal() {
+        return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2);
+    }}
     }
 </script>
 {% endblock %}

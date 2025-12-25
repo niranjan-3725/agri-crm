@@ -1,97 +1,53 @@
+import re
 
-content = """{% extends 'base.html' %}
+path = r'C:\agri_crm\templates\transactions\sales_form.html'
 
-{% block content %}
-<div class="max-w-7xl mx-auto" x-data="{ tab: 'sales' }">
-    <div class="flex justify-between items-center mb-6">
-        <h1 class="text-3xl font-bold text-slate-800">Returns Management</h1>
-        <div class="space-x-4">
-            <a href="{% url 'create_sales_return' %}" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded">
-                + Customer Return (Inward)
-            </a>
-            <a href="{% url 'create_purchase_return' %}" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
-                + Supplier Return (Outward)
-            </a>
-        </div>
-    </div>
+# Read file with explicit encoding
+with open(path, 'r', encoding='utf-8') as f:
+    content = f.read()
 
-    <!-- Tabs -->
-    <div class="mb-4 border-b border-gray-200">
-        <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-gray-500">
-            <li class="mr-2">
-                <a href="#" @click.prevent="tab = 'sales'" :class="{ 'text-blue-600 border-blue-600 active': tab === 'sales', 'border-transparent hover:text-gray-600 hover:border-gray-300': tab !== 'sales' }" class="inline-block p-4 border-b-2 rounded-t-lg">
-                    Customer Returns (Sales)
-                </a>
-            </li>
-            <li class="mr-2">
-                <a href="#" @click.prevent="tab = 'purchase'" :class="{ 'text-blue-600 border-blue-600 active': tab === 'purchase', 'border-transparent hover:text-gray-600 hover:border-gray-300': tab !== 'purchase' }" class="inline-block p-4 border-b-2 rounded-t-lg">
-                    Supplier Returns (Purchase)
-                </a>
-            </li>
-        </ul>
-    </div>
+# Count original issues
+issues_before = content.count('{ {') + content.count('} }') + content.count('| safe |')
+print(f'Issues found before fix: {issues_before}')
 
-    <!-- Tab Content -->
-    <div x-show="tab === 'sales'">
-        <div class="overflow-x-auto shadow-md rounded-lg mb-8">
-            <table class="min-w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-orange-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">Date</th>
-                        <th scope="col" class="px-6 py-3">Customer</th>
-                        <th scope="col" class="px-6 py-3">Refund Amount</th>
-                        <th scope="col" class="px-6 py-3">Ref Invoice</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ret in sales_returns %}
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ ret.date }}</td>
-                        <td class="px-6 py-4 font-medium text-gray-900">{{ ret.customer.name }}</td>
-                        <td class="px-6 py-4 font-bold text-orange-600">₹{{ ret.refund_amount }}</td>
-                        <td class="px-6 py-4 text-gray-400">
-                            {% if ret.original_sale %}{{ ret.original_sale.invoice_number }}{% else %}Standalone{% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="4" class="px-6 py-4 text-center">No returns found.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
+# Fix all split braces - replace { { with {{ and } } with }}
+content = content.replace('{ {', '{{')
+content = content.replace('} }', '}}')
 
-    <div x-show="tab === 'purchase'" style="display: none;">
-        <div class="overflow-x-auto shadow-md rounded-lg mb-8">
-            <table class="min-w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-red-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">Date</th>
-                        <th scope="col" class="px-6 py-3">Supplier</th>
-                        <th scope="col" class="px-6 py-3">Refund Amount</th>
-                        <th scope="col" class="px-6 py-3">Reason</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ret in purchase_returns %}
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ ret.date }}</td>
-                        <td class="px-6 py-4 font-medium text-gray-900">{{ ret.supplier.name }}</td>
-                        <td class="px-6 py-4 font-bold text-red-600">₹{{ ret.total_refund_amount }}</td>
-                        <td class="px-6 py-4">{{ ret.reason }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="4" class="px-6 py-4 text-center">No returns found.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
+# Fix split filters - replace | safe | with |safe|
+content = content.replace('| safe |', '|safe|')
 
-</div>
-{% endblock %}
-"""
+# Fix default filter spacing - replace |d efault: with |default:
+content = content.replace('|d efault:', '|default:')
+content = content.replace('|default: ', '|default:')
 
-with open('c:/agri_crm/templates/transactions/returns_list.html', 'w', encoding='utf-8') as f:
+# Fix split else/endif tags
+content = content.replace('{% else %} ', '{% else %}')
+content = content.replace(' {% endif %}', '{% endif %}')
+
+# Fix any double newline in {{ }}
+content = re.sub(r'\{\{\s*\n\s*\}\}', '}}', content)
+content = re.sub(r'\{\{\s*([^}]+)\s*\n\s*\}\}', r'{{ \1 }}', content)
+
+# Fix split default value
+content = content.replace('|default:"[]"\n    }}', '|default:"[]" }}')
+
+# Write back with explicit flush
+with open(path, 'w', encoding='utf-8') as f:
     f.write(content)
-print("File overwritten successfully.")
+    f.flush()
+
+# Verify changes
+with open(path, 'r', encoding='utf-8') as f:
+    new_content = f.read()
+
+issues_after = new_content.count('{ {') + new_content.count('} }') + new_content.count('| safe |')
+print(f'Issues after fix: {issues_after}')
+
+# Print key lines to verify
+lines = new_content.split('\n')
+print(f'\nLine 343: {lines[342][:100] if len(lines) > 342 else "N/A"}')
+print(f'Line 344: {lines[343][:100] if len(lines) > 343 else "N/A"}')
+print(f'Line 345: {lines[344][:100] if len(lines) > 344 else "N/A"}')
+print(f'Line 401: {lines[400][:100] if len(lines) > 400 else "N/A"}')
+print(f'Line 402: {lines[401][:100] if len(lines) > 401 else "N/A"}')

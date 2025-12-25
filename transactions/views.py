@@ -265,16 +265,16 @@ def create_sale(request):
                 
         except ValidationError as e:
             customers = Customer.objects.all()
-            return render(request, 'transactions/sales_form.html', {'customers': customers, 'error': e.message})
+            return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'error': e.message})
         except Exception as e:
             customers = Customer.objects.all()
-            return render(request, 'transactions/sales_form.html', {'customers': customers, 'error': str(e)})
+            return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'error': str(e)})
 
     # GET Request
     customers = Customer.objects.all()
     # Batches for dropdown (Active and > 0 stock)
     batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
-    return render(request, 'transactions/sales_form.html', {'customers': customers, 'batches': batches})
+    return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'batches': batches})
 
 def sales_list(request):
     invoices_list = SalesInvoice.objects.select_related('customer').all().order_by('-date', '-id')
@@ -315,6 +315,134 @@ def sales_list(request):
 def invoice_detail(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
     return render(request, 'transactions/invoice_detail.html', {'invoice': invoice})
+
+def edit_sale(request, pk):
+    """Edit an existing sales invoice - follows purchase_edit pattern."""
+    invoice = get_object_or_404(SalesInvoice, pk=pk)
+    customers = Customer.objects.all()
+    
+    # Build existing items for pre-population
+    existing_items = []
+    for item in invoice.items.select_related('batch__product'):
+        size_val = item.batch.size if item.batch.size else ''
+        unit_val = item.batch.unit or ''
+        existing_items.append({
+            'id': item.id,
+            'batch_id': item.batch.id,
+            'product_id': item.batch.product.id,
+            'product_name': item.batch.product.name,
+            'batch_number': item.batch.batch_number,
+            'size': str(size_val),
+            'unit': unit_val,
+            'size_label': f"{size_val} {unit_val}" if size_val else '',
+            'mfg_date': str(item.batch.manufacturing_date) if item.batch.manufacturing_date else '',
+            'expiry_date': str(item.batch.expiry_date) if item.batch.expiry_date else '',
+            'current_stock': item.batch.current_quantity + item.quantity,  # Add back this item's qty  
+            'qty': item.quantity,
+            'price': float(item.unit_price),
+            'tax_rate': float(item.tax_rate),
+            'tax_amount': float(item.tax_amount),
+            'total': float(item.total_amount)
+        })
+    
+    if request.method == 'POST':
+        try:
+            with transaction.atomic():
+                customer_id = request.POST.get('customer')
+                date = request.POST.get('date')
+                
+                customer = Customer.objects.get(id=customer_id) if customer_id else None
+                
+                # Restore stock from old items before deleting
+                for item in invoice.items.all():
+                    item.batch.current_quantity += item.quantity
+                    item.batch.save()
+                    item.delete()
+                
+                # Update invoice header
+                invoice.customer = customer
+                invoice.date = date
+                
+                # Process new items
+                batch_ids = request.POST.getlist('batch_id[]')
+                quantities = request.POST.getlist('qty[]')
+                prices = request.POST.getlist('price[]')
+                
+                total_taxable = 0
+                total_cgst = 0
+                total_sgst = 0
+                grand_total = 0
+                
+                for i in range(len(batch_ids)):
+                    batch_id = batch_ids[i]
+                    qty = int(quantities[i]) if quantities[i] else 0
+                    price = float(prices[i]) if prices[i] else 0
+                    
+                    if not batch_id or qty <= 0:
+                        continue
+                        
+                    batch = Batch.objects.get(id=batch_id)
+                    
+                    # Calculations
+                    tax_rate = batch.product.category.total_tax
+                    tax_amount = (price * qty * float(tax_rate)) / 100
+                    total = (price * qty) + tax_amount
+                    
+                    # Create Item
+                    item = SalesItem(
+                        invoice=invoice,
+                        batch=batch,
+                        quantity=qty,
+                        unit_price=price,
+                        tax_rate=tax_rate,
+                        tax_amount=tax_amount,
+                        total_amount=total
+                    )
+                    item.clean()  # Validate stock
+                    item.save()
+                    
+                    # Stock deducted by signal
+                    
+                    total_taxable += (price * qty)
+                    total_cgst += tax_amount / 2
+                    total_sgst += tax_amount / 2
+                    grand_total += total
+                
+                # Update Invoice Totals
+                invoice.total_taxable = total_taxable
+                invoice.total_cgst = total_cgst
+                invoice.total_sgst = total_sgst
+                invoice.grand_total = grand_total
+                invoice.save()
+                
+                return redirect('invoice_detail', pk=invoice.pk)
+                
+        except ValidationError as e:
+            return render(request, 'transactions/sales_form_v2.html', {
+                'invoice': invoice,
+                'customers': customers,
+                'existing_items': existing_items,
+                'existing_items_json': json.dumps(existing_items),
+                'error': e.message
+            })
+        except Exception as e:
+            return render(request, 'transactions/sales_form_v2.html', {
+                'invoice': invoice,
+                'customers': customers,
+                'existing_items': existing_items,
+                'existing_items_json': json.dumps(existing_items),
+                'error': str(e)
+            })
+    
+    # GET: Render form with pre-populated data
+    batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
+    return render(request, 'transactions/sales_form_v2.html', {
+        'invoice': invoice,
+        'customers': customers,
+        'batches': batches,
+        'existing_items': existing_items,
+        'existing_items_json': json.dumps(existing_items)
+    })
 
 def purchase_list(request):
     invoices_list = PurchaseInvoice.objects.all().order_by('-date', '-id')
