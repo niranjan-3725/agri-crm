@@ -1020,12 +1020,80 @@ def create_purchase(request):
     })
 
 
+def get_customer_invoices(request):
+    customer_id = request.GET.get('customer_id')
+    if not customer_id:
+        if request.GET.get('format') == 'json':
+            return JsonResponse([], safe=False)
+        return HttpResponse("")
+    
+    invoices = SalesInvoice.objects.filter(
+        customer_id=customer_id, 
+        payment_status__in=['PAID', 'PARTIAL']
+    ).order_by('-date')
+    
+    if request.GET.get('format') == 'json':
+        data = [{
+            'id': inv.id,
+            'invoice_number': inv.invoice_number,
+            'date': inv.date.strftime('%Y-%m-%d'),
+            'grand_total': float(inv.grand_total)
+        } for inv in invoices]
+        return JsonResponse(data, safe=False)
+    
+    options = '<option value="">-- Select Invoice --</option>'
+    for inv in invoices:
+        options += f'<option value="{inv.id}">#{inv.invoice_number} ({inv.date}) - ₹{inv.grand_total}</option>'
+        
+    return HttpResponse(options)
+
+def get_invoice_items(request):
+    invoice_id = request.GET.get('invoice_id')
+    if not invoice_id:
+        return JsonResponse([], safe=False)
+        
+    invoice = get_object_or_404(SalesInvoice, pk=invoice_id)
+    items_data = []
+    
+    for item in invoice.items.select_related('batch', 'batch__product').all():
+        already_returned = SalesReturnItem.objects.filter(
+            return_invoice__original_sale=invoice, 
+            batch=item.batch
+        ).aggregate(Sum('quantity'))['quantity__sum'] or 0
+        
+        max_returnable = item.quantity - already_returned
+        
+        if max_returnable > 0:
+            items_data.append({
+                'id': item.id, 
+                'product_name': item.batch.product.name,
+                'batch_id': item.batch.id,
+                'batch_number': item.batch.batch_number,
+                'qty_sold': item.quantity,
+                'qty_returned_already': already_returned,
+                'max_returnable': max_returnable,
+                'price': float(item.unit_price),
+                'price': float(item.unit_price),
+                'unit': item.batch.unit,
+                'size': float(item.batch.size),
+                'mfg_date': item.batch.manufacturing_date.strftime('%d-%m-%Y') if item.batch.manufacturing_date else '-',
+                'exp_date': item.batch.expiry_date.strftime('%d-%m-%Y') if item.batch.expiry_date else '-'
+            })
+            
+    return JsonResponse(items_data, safe=False)
+
 def returns_list(request):
     sales_returns = SalesReturn.objects.all().order_by('-date')
     purchase_returns = PurchaseReturn.objects.all().order_by('-date')
+    
+    total_sales_refunds = sales_returns.aggregate(Sum('refund_amount'))['refund_amount__sum'] or 0
+    total_purchase_refunds = purchase_returns.aggregate(Sum('total_refund_amount'))['total_refund_amount__sum'] or 0
+    
     return render(request, 'transactions/returns_list.html', {
         'sales_returns': sales_returns,
-        'purchase_returns': purchase_returns
+        'purchase_returns': purchase_returns,
+        'total_sales_refunds': total_sales_refunds,
+        'total_purchase_refunds': total_purchase_refunds
     })
 
 def create_sales_return(request):
@@ -1268,10 +1336,73 @@ def record_receipt(request, pk):
             
     return redirect('invoice_detail', pk=pk)
 
+@csrf_exempt
 @require_POST
 def delete_customer_payment(request, pk):
     payment = get_object_or_404(CustomerPayment, pk=pk)
     invoice_pk = payment.invoice.pk
     payment.delete()
-    # messages.success(request, "Receipt deleted successfully.") # messages not imported? using print/log or just redirect
     return redirect('invoice_detail', pk=invoice_pk)
+
+def customer_ledger(request):
+    """
+    Sprint 44: Customer Ledger Dashboard
+    Shows net position (Wallet vs Unpaid Invoices) for all customers.
+    """
+    from django.db.models import Prefetch, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    # 1. Fetch Active Customers
+    # Prefetch only UNPAID/PARTIAL invoices to avoid fetching full history
+    unpaid_invoices_pref = Prefetch(
+        'salesinvoice_set',
+        queryset=SalesInvoice.objects.filter(payment_status__in=['UNPAID', 'PARTIAL']).order_by('date'),
+        to_attr='unpaid_invoices'
+    )
+
+    customers = Customer.objects.annotate(
+        # Coalesce to 0 to ensure math works
+        total_due=Coalesce(Sum('salesinvoice__balance_due', filter=Q(salesinvoice__payment_status__in=['UNPAID', 'PARTIAL'])), Value(Decimal('0')), output_field=DecimalField()),
+    ).annotate(
+        # Calculate Net Position (Wallet - Due) positive = Advance, negative = Collect
+        net_position=ExpressionWrapper(F('wallet_balance') - F('total_due'), output_field=DecimalField())
+    ).filter(
+        Q(total_due__gt=0) | Q(wallet_balance__gt=0)
+    ).prefetch_related(unpaid_invoices_pref).order_by('-total_due')
+
+    # 2. Market Stats
+    market_outstanding = customers.aggregate(Sum('total_due'))['total_due__sum'] or 0
+    total_advances = customers.aggregate(Sum('wallet_balance'))['wallet_balance__sum'] or 0
+
+    return render(request, 'transactions/receivables_dashboard.html', {
+        'customers': customers,
+        'market_outstanding': market_outstanding,
+        'total_advances': total_advances,
+    })
+
+@csrf_exempt
+@require_POST
+def settle_invoice_via_wallet(request, invoice_id):
+    invoice = get_object_or_404(SalesInvoice, pk=invoice_id)
+    customer = invoice.customer
+    
+    if not customer:
+        messages.error(request, "Invoice has no customer.")
+        return redirect('customer_ledger')
+
+    # Calculate max possible payment
+    amount_to_pay = min(invoice.balance_due, customer.wallet_balance)
+    
+    if amount_to_pay > 0:
+        # Create Payment (Signal handles logic: Deduct Wallet, Mark Invoice Paid)
+        CustomerPayment.objects.create(
+            invoice=invoice,
+            amount=amount_to_pay,
+            payment_mode='WALLET', 
+            notes='Settled via One-Click Dashboard'
+        )
+        messages.success(request, f"Settled \u20B9{amount_to_pay} for #{invoice.invoice_number}")
+    else:
+        messages.error(request, "Insufficient wallet balance or invoice already paid.")
+        
+    return redirect('customer_ledger')

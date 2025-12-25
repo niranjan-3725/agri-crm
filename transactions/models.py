@@ -207,6 +207,7 @@ class CustomerPayment(models.Model):
         ('UPI', 'UPI'),
         ('CHEQUE', 'Cheque'),
         ('BANK', 'Bank Transfer'),
+        ('WALLET', 'Wallet'),
     ]
     
     invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.CASCADE)

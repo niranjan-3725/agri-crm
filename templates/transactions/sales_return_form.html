@@ -16,7 +16,7 @@
                     <span>Return</span>
                 </div>
                 <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">Sales Return</h1>
-                <p class="text-gray-500">Process customer returns and refunds</p>
+                <p class="text-gray-500">Process customer returns from existing invoices</p>
             </header>
 
             {% if error %}
@@ -31,22 +31,76 @@
 
                 <!-- Master Fields Card -->
                 <div
-                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+                    <!-- Searchable Customer -->
+                    <div class="relative">
                         <label
                             class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Customer</label>
-                        <select name="customer"
-                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
-                            <option value="">-- Select Customer --</option>
-                            {% for customer in customers %}
-                            <option value="{{ customer.id }}">{{ customer.name }} ({{ customer.city|default:"" }}) - {{
-                                customer.mobile_no }}</option>
-                            {% endfor %}
-                        </select>
+                        <div class="relative group" @click.away="customerOpen = false">
+                            <input type="hidden" name="customer" x-model="customerId">
+                            <input type="text" x-model="customerSearch" @input.debounce.300ms="searchCustomers()"
+                                @focus="customerOpen = true" placeholder="Search by Name or Mobile..."
+                                class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+
+                            <!-- Dropdown -->
+                            <div x-show="customerOpen && customerResults.length > 0"
+                                class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                style="display: none;">
+                                <template x-for="c in customerResults" :key="c.id">
+                                    <div @click="selectCustomer(c)"
+                                        class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                        <div class="font-bold text-gray-900" x-text="c.name"></div>
+                                        <div class="text-xs text-gray-500">
+                                            <span x-text="c.city || 'No City'"></span> • <span
+                                                x-text="c.mobile_no"></span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
+
+                    <!-- Searchable Invoice -->
+                    <div class="relative">
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Original
+                            Invoice</label>
+                        <div class="relative group" @click.away="invoiceOpen = false">
+                            <input type="hidden" name="original_sale" x-model="invoiceId">
+                            <input type="text" x-model="invoiceSearch" @focus="openInvoiceDropdown()"
+                                :disabled="!customerId" placeholder="Select Invoice..."
+                                class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed">
+
+                            <!-- Dropdown -->
+                            <div x-show="invoiceOpen && availableInvoices.length > 0"
+                                class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                style="display: none;">
+                                <template x-for="inv in filteredInvoices()" :key="inv.id">
+                                    <div @click="selectInvoice(inv)"
+                                        class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                        <div class="font-bold text-gray-900" x-text="'#' + inv.invoice_number"></div>
+                                        <div class="text-xs text-gray-500 flex justify-between">
+                                            <span x-text="inv.date"></span>
+                                            <span class="font-bold text-amber-600"
+                                                x-text="'₹' + inv.grand_total.toFixed(2)"></span>
+                                        </div>
+                                    </div>
+                                </template>
+                                <!-- No Results -->
+                                <div x-show="filteredInvoices().length === 0"
+                                    class="p-4 text-center text-gray-400 text-sm">
+                                    No invoices found.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Return Date -->
                     <div>
                         <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Date</label>
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
+                            Date</label>
                         <input type="date" name="date" value="{% now 'Y-m-d' %}"
                             class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
                     </div>
@@ -55,70 +109,117 @@
                 <!-- Items Section -->
                 <div class="space-y-4">
                     <template x-for="(row, i) in rows" :key="row.id">
-                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative">
+                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative"
+                            :class="{'opacity-50 pointer-events-none': !invoiceId}">
                             <!-- Remove Button -->
                             <button type="button" @click="removeRow(i)"
-                                class="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                class="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-10">
+                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
                                 </svg>
                             </button>
 
-                            <!-- Row 1: Product Search -->
-                            <div class="mb-4">
-                                <label
-                                    class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Product
-                                    Search</label>
-                                <input type="text" placeholder="Type to search products..." list="product-list"
-                                    hx-get="{% url 'search_products' %}" hx-trigger="keyup changed delay:500ms"
-                                    hx-target="#product-list" name="product_search"
-                                    class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+                            <!-- Hidden Inputs -->
+                            <input type="hidden" name="batch_id[]" :value="row.batchId">
+
+                            <!-- Row 1: Item Selection (Custom Dropdown) -->
+                            <div class="mb-4 relative" @click.away="row.itemOpen = false">
+                                <div class="flex justify-between items-end mb-2">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 block">Item
+                                        to Return</label>
+                                    <div class="flex gap-4 text-xs font-bold pr-10" x-show="row.batchId">
+                                        <span class="text-gray-400">Mfg: <span class="text-gray-900"
+                                                x-text="row.mfgDate || '-'"></span></span>
+                                        <span class="text-gray-400">Exp: <span class="text-red-600"
+                                                x-text="row.expDate || '-'"></span></span>
+                                    </div>
+                                </div>
+                                <div class="relative group">
+                                    <input type="text" x-model="row.productName"
+                                        @click="!invoiceId ? null : row.itemOpen = !row.itemOpen"
+                                        placeholder="Select Item..." readonly
+                                        class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all cursor-pointer disabled:cursor-not-allowed placeholder-gray-400"
+                                        :disabled="!invoiceId">
+
+                                    <!-- Dropdown -->
+                                    <div x-show="row.itemOpen && getFilteredItems(row).length > 0"
+                                        class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                        style="display: none;">
+                                        <template x-for="item in getFilteredItems(row)" :key="item.id">
+                                            <div @click="selectItem(row, item)"
+                                                class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                                <div class="font-bold text-gray-900" x-text="item.product_name"></div>
+                                                <div class="text-xs text-gray-500 mt-0.5 space-x-2">
+                                                    <span class="bg-gray-100 px-1.5 rounded text-gray-600 font-mono"
+                                                        x-text="item.batch_number"></span>
+                                                    <span>•</span>
+                                                    <span x-text="item.size + ' ' + item.unit"></span>
+                                                    <span>•</span>
+                                                    <span>Sold: <span class="font-bold text-gray-900"
+                                                            x-text="item.qty_sold"></span></span>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
                             </div>
 
-                            <!-- Row 2: Batch, Stock, Qty, Rate -->
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <!-- Row 2: Info Grid -->
+                            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                <!-- Batch -->
                                 <div>
                                     <label
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Batch</label>
-                                    <select name="batch_id[]" x-model="row.batchId"
-                                        :hx-get="'{% url 'get_batch_details' %}?batch_id=' + row.batchId"
-                                        :hx-target="'#batch-details-' + row.id" hx-trigger="change"
-                                        @htmx:after-swap="updateRowFromDOM($event, row)"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
-                                        <option value="">Select Batch</option>
-                                        {% for batch in batches %}
-                                        <option value="{{ batch.id }}">{{ batch }}</option>
-                                        {% endfor %}
-                                    </select>
+                                    <input type="text" x-model="row.batchNumber" readonly
+                                        class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
                                 </div>
+
+                                <!-- Size (New) -->
                                 <div>
                                     <label
-                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Stock
-                                        Info</label>
-                                    <div :id="'batch-details-' + row.id"
-                                        class="h-12 bg-gray-100 rounded-xl px-4 flex items-center text-sm text-gray-500">
-                                        <span>Select a batch...</span>
-                                    </div>
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Size</label>
+                                    <input type="text" x-model="row.size" readonly
+                                        class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
                                 </div>
+
+                                <!-- Unit -->
                                 <div>
                                     <label
-                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Quantity</label>
-                                    <input type="number" name="qty[]" x-model.number="row.qty"
-                                        @input="calculateRow(row)" min="1"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center">
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Unit</label>
+                                    <input type="text" x-model="row.unit" readonly
+                                        class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
                                 </div>
+
+                                <!-- Quantity -->
                                 <div>
                                     <label
-                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Refund
-                                        Rate</label>
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
+                                        Qty</label>
+                                    <input type="number" name="qty[]" x-model.number="row.qty" @input="validateQty(row)"
+                                        min="1" :max="row.maxQty" :disabled="!row.batchId"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-bold text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                    <p class="text-[10px] text-amber-600 font-bold mt-1 text-center"
+                                        x-show="row.maxQty > 0">
+                                        Max: <span x-text="row.maxQty"></span>
+                                    </p>
+                                </div>
+
+                                <!-- Refund Rate -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Rate</label>
                                     <input type="number" step="0.01" name="price[]" x-model.number="row.price"
-                                        @input="calculateRow(row)"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center">
+                                        @input="calculateRow(row)" :disabled="!row.batchId"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
                                 </div>
                             </div>
 
-                            <!-- Row Total (Small display) -->
+                            <!-- Row Total -->
                             <div class="mt-4 pt-4 border-t border-gray-50 flex justify-end">
                                 <div class="text-right">
                                     <span class="text-xs text-gray-400 uppercase">Item Total</span>
@@ -131,15 +232,21 @@
 
                     <!-- Add Item Button -->
                     <button type="button" @click="addRow()"
-                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/50 transition-all font-bold flex items-center justify-center gap-2">
+                        :disabled="!invoiceId || rows.length >= availableItems.length"
+                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50/50 transition-all font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path d="M12 4v16m8-8H4"></path>
                         </svg>
                         Add Another Item
                     </button>
+                    <p class="text-xs text-amber-600 font-bold text-center mt-2"
+                        x-show="rows.length >= availableItems.length && availableItems.length > 0"
+                        style="display: none;">
+                        All available items added.
+                    </p>
                 </div>
 
-                <!-- Hidden submit for form (actual button in sidebar) -->
+                <!-- Hidden submit -->
                 <button type="submit" id="main-submit-btn" class="hidden">Submit</button>
             </form>
 
@@ -156,31 +263,22 @@
             </div>
 
             <div class="flex-1 p-8 space-y-6 overflow-y-auto">
-
-                <!-- Summary Stats -->
                 <div class="space-y-4">
                     <div class="flex justify-between items-center py-3 border-b border-gray-50">
                         <span class="text-gray-500">Total Items</span>
                         <span class="font-bold text-gray-900" x-text="rows.length"></span>
                     </div>
-                    <div class="flex justify-between items-center py-3 border-b border-gray-50">
-                        <span class="text-gray-500">Total Quantity</span>
-                        <span class="font-bold text-gray-900" x-text="totalQty()"></span>
-                    </div>
                 </div>
-
-                <!-- Grand Total -->
                 <div class="bg-amber-50/50 rounded-2xl p-6 border border-amber-100">
                     <div class="text-xs font-bold uppercase tracking-widest text-amber-600 mb-2">Total Refund</div>
                     <div class="text-4xl font-bold text-gray-900">&#8377;<span x-text="grandTotal()"></span></div>
                 </div>
-
             </div>
 
-            <!-- Action Button -->
             <div class="p-8 pt-4 border-t border-gray-50">
                 <button type="button" @click="document.getElementById('main-submit-btn').click()"
-                    class="bg-amber-500 hover:bg-amber-600 text-white w-full py-5 rounded-2xl font-bold text-lg shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3">
+                    :disabled="!invoiceId || grandTotal() <= 0"
+                    class="bg-amber-500 hover:bg-amber-600 text-white w-full py-5 rounded-2xl font-bold text-lg shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
                     <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                     </svg>
@@ -191,45 +289,98 @@
         </div>
     </aside>
 
-    <!-- Shared Datalist -->
-    <datalist id="product-list"></datalist>
-
 </div>
 
 <script>
     function salesReturnLogic() {
         return {
-            rows: [
-                { id: Date.now(), batchId: '', qty: 1, price: 0, total: 0 }
-            ],
+            customerId: '', customerSearch: '', customerResults: [], customerOpen: false,
+            invoiceId: '', invoiceSearch: '', availableInvoices: [], invoiceOpen: false,
+            availableItems: [],
+
+            rows: [],
+
+            init() {
+                this.addRow();
+            },
+
+            async searchCustomers() {
+                if (this.customerSearch.length < 2) { this.customerResults = []; return; }
+                const res = await fetch(`{% url 'search_customers' %}?q=${this.customerSearch}`);
+                this.customerResults = await res.json();
+                this.customerOpen = true;
+            },
+            async selectCustomer(c) {
+                this.customerId = c.id;
+                this.customerSearch = `${c.name} (${c.city || ''})`;
+                this.customerOpen = false;
+                this.loadInvoices(c.id);
+            },
+            async loadInvoices(customerId) {
+                this.invoiceId = ''; this.invoiceSearch = '';
+                this.availableInvoices = []; this.availableItems = [];
+                this.rows = []; this.addRow();
+                try {
+                    const res = await fetch(`/get-customer-invoices/?format=json&customer_id=${customerId}`);
+                    this.availableInvoices = await res.json();
+                } catch (e) { console.error(e); }
+            },
+            openInvoiceDropdown() { if (this.availableInvoices.length > 0) this.invoiceOpen = true; },
+            filteredInvoices() {
+                if (!this.invoiceSearch) return this.availableInvoices;
+                const q = this.invoiceSearch.toLowerCase();
+                return this.availableInvoices.filter(i => i.invoice_number.toLowerCase().includes(q) || i.date.includes(q) || i.grand_total.toString().includes(q));
+            },
+            async selectInvoice(inv) {
+                this.invoiceId = inv.id;
+                this.invoiceSearch = `#${inv.invoice_number} (${inv.date}) - \u20B9${inv.grand_total.toFixed(2)}`;
+                this.invoiceOpen = false;
+                this.fetchInvoiceItems(inv.id);
+            },
+            async fetchInvoiceItems(invoiceId) {
+                try {
+                    const response = await fetch(`/get-invoice-items/?invoice_id=${invoiceId}`);
+                    this.availableItems = await response.json();
+                    this.rows = []; this.addRow();
+                } catch (error) { console.error('Error fetching items:', error); }
+            },
+
+
+            getFilteredItems(currentRow) {
+                const usedBatchIds = this.rows.filter(r => r !== currentRow && r.batchId).map(r => r.batchId);
+                return this.availableItems.filter(item => !usedBatchIds.includes(item.batch_id));
+            },
+
+            selectItem(row, item) {
+                row.batchId = item.batch_id;
+                row.productName = item.product_name; // Just name
+                row.size = item.size;
+                row.unit = item.unit;
+                row.batchNumber = item.batch_number;
+                row.mfgDate = item.mfg_date;
+                row.expDate = item.exp_date;
+                row.maxQty = item.max_returnable;
+                row.price = item.price;
+                row.itemOpen = false;
+                row.qty = 1;
+                this.calculateRow(row);
+            },
+
+            validateQty(row) {
+                if (row.qty > row.maxQty) row.qty = row.maxQty;
+                if (row.qty < 1) row.qty = 1;
+                this.calculateRow(row);
+            },
             addRow() {
-                this.rows.push({ id: Date.now(), batchId: '', qty: 1, price: 0, total: 0 });
-                setTimeout(() => {
-                    htmx.process(document.body);
-                }, 100);
+                this.rows.push({
+                    id: Date.now(), batchId: '', qty: 1, price: 0, total: 0,
+                    productName: '', itemOpen: false, size: '', unit: '', batchNumber: '', maxQty: 0
+                });
             },
-            removeRow(index) {
-                if (this.rows.length > 1) {
-                    this.rows.splice(index, 1);
-                }
-            },
-            calculateRow(row) {
-                row.total = row.qty * row.price;
-            },
-            totalQty() {
-                return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0);
-            },
-            grandTotal() {
-                return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2);
-            },
-            updateRowFromDOM(event, row) {
-                const container = event.target;
-                const unitPrice = container.querySelector('.unit-price')?.value;
-                if (unitPrice) {
-                    row.price = parseFloat(unitPrice);
-                    this.calculateRow(row);
-                }
-            }
+            removeRow(index) { if (this.rows.length > 1) this.rows.splice(index, 1); },
+            calculateRow(row) { row.total = row.qty * row.price; },
+            totalQty() { return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0); },
+            grandTotal() { return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2); }
         }
     }
 </script>

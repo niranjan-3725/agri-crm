@@ -12,6 +12,18 @@ from .models import SupplierPayment, CustomerPayment
 def update_sales_invoice_payment_status(sender, instance, **kwargs):
     invoice = instance.invoice
     
+    # Sprint 44: Wallet Logic
+    if instance.payment_mode == 'WALLET' and invoice.customer:
+        customer = invoice.customer
+        if kwargs.get('created', False):
+            # Deduction on Creation
+            customer.wallet_balance -= instance.amount
+            customer.save()
+        elif kwargs.get('signal') == post_delete:
+            # Refund on Deletion
+            customer.wallet_balance += instance.amount
+            customer.save()
+    
     # Calculate total received
     total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
     

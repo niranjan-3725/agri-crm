@@ -1,91 +1,250 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto" x-data="{ tab: 'sales' }">
-    <div class="flex justify-between items-center mb-6">
-        <h1 class="text-3xl font-bold text-slate-800">Returns Management</h1>
-        <div class="space-x-4">
-            <a href="{% url 'create_sales_return' %}" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded">
-                + Customer Return (Inward)
+<div class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]" x-data="{ tab: 'sales' }">
+
+    <!-- LEFT COLUMN: Main Content -->
+    <div class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32">
+
+        <!-- Header -->
+        <div class="mb-10 space-y-2">
+            <div class="flex items-center gap-2">
+                <span
+                    class="px-2 py-1 rounded bg-gray-100 text-gray-500 text-[10px] font-bold uppercase tracking-widest">Transactions</span>
+                <span class="text-gray-300">•</span>
+                <span class="text-gray-400 text-[10px] font-bold uppercase tracking-widest">Returns</span>
+            </div>
+            <h1 class="text-5xl font-bold text-gray-900 tracking-tight">Returns</h1>
+        </div>
+
+        <!-- Action Bar (Split) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+            <!-- Customer Return (Amber) -->
+            <a href="{% url 'create_sales_return' %}"
+                class="bg-amber-500 hover:bg-amber-600 text-white rounded-3xl p-6 transition-all shadow-xl shadow-amber-500/20 hover:shadow-amber-500/30 group relative overflow-hidden flex flex-col justify-between h-40">
+                <div class="relative z-10 flex justify-between items-start">
+                    <div class="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                        </svg>
+                    </div>
+                    <svg class="w-6 h-6 text-white/50 group-hover:translate-x-1 transition-transform" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                </div>
+                <div class="relative z-10">
+                    <h3 class="text-2xl font-bold">Customer Return</h3>
+                    <p class="text-amber-100 font-medium">Inward Stock</p>
+                </div>
+                <!-- Decorative Circle -->
+                <div
+                    class="absolute -bottom-4 -right-4 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:bg-white/20 transition-colors">
+                </div>
             </a>
-            <a href="{% url 'create_purchase_return' %}" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
-                + Supplier Return (Outward)
+
+            <!-- Supplier Return (Red) -->
+            <a href="{% url 'create_purchase_return' %}"
+                class="bg-red-600 hover:bg-red-700 text-white rounded-3xl p-6 transition-all shadow-xl shadow-red-600/20 hover:shadow-red-600/30 group relative overflow-hidden flex flex-col justify-between h-40">
+                <div class="relative z-10 flex justify-between items-start">
+                    <div class="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                        <svg class="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                        </svg>
+                    </div>
+                    <svg class="w-6 h-6 text-white/50 group-hover:translate-x-1 transition-transform" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                </div>
+                <div class="relative z-10">
+                    <h3 class="text-2xl font-bold">Supplier Return</h3>
+                    <p class="text-red-100 font-medium">Outward Stock</p>
+                </div>
+                <div
+                    class="absolute -bottom-4 -right-4 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:bg-white/20 transition-colors">
+                </div>
             </a>
         </div>
-    </div>
 
-    <!-- Tabs -->
-    <div class="mb-4 border-b border-gray-200">
-        <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-gray-500">
-            <li class="mr-2">
-                <a href="#" @click.prevent="tab = 'sales'" :class="{ 'text-blue-600 border-blue-600 active': tab === 'sales', 'border-transparent hover:text-gray-600 hover:border-gray-300': tab !== 'sales' }" class="inline-block p-4 border-b-2 rounded-t-lg">
-                    Customer Returns (Sales)
-                </a>
-            </li>
-            <li class="mr-2">
-                <a href="#" @click.prevent="tab = 'purchase'" :class="{ 'text-blue-600 border-blue-600 active': tab === 'purchase', 'border-transparent hover:text-gray-600 hover:border-gray-300': tab !== 'purchase' }" class="inline-block p-4 border-b-2 rounded-t-lg">
-                    Supplier Returns (Purchase)
-                </a>
-            </li>
-        </ul>
-    </div>
+        <!-- Tab Switcher -->
+        <div class="bg-white p-1.5 rounded-2xl border border-gray-100 inline-flex mb-8 shadow-sm">
+            <button @click="tab = 'sales'"
+                :class="tab === 'sales' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'"
+                class="px-6 py-3 rounded-xl font-bold text-sm transition-all duration-200">
+                Customer Returns (Inward)
+            </button>
+            <button @click="tab = 'purchase'"
+                :class="tab === 'purchase' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'"
+                class="px-6 py-3 rounded-xl font-bold text-sm transition-all duration-200">
+                Supplier Returns (Outward)
+            </button>
+        </div>
 
-    <!-- Tab Content -->
-    <div x-show="tab === 'sales'">
-        <div class="overflow-x-auto shadow-md rounded-lg mb-8">
-            <table class="min-w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-orange-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">Date</th>
-                        <th scope="col" class="px-6 py-3">Customer</th>
-                        <th scope="col" class="px-6 py-3">Refund Amount</th>
-                        <th scope="col" class="px-6 py-3">Ref Invoice</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ret in sales_returns %}
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ ret.date }}</td>
-                        <td class="px-6 py-4 font-medium text-gray-900">{{ ret.customer.name }}</td>
-                        <td class="px-6 py-4 font-bold text-orange-600">₹{{ ret.refund_amount }}</td>
-                        <td class="px-6 py-4 text-gray-400">
-                            {% if ret.original_sale %}{{ ret.original_sale.invoice_number }}{% else %}Standalone{% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="4" class="px-6 py-4 text-center">No returns found.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <!-- Content Area -->
+        <div class="space-y-4">
+
+            <!-- SALES RETURN LIST -->
+            <div x-show="tab === 'sales'" x-transition:enter="transition ease-out duration-300"
+                x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0"
+                class="space-y-4">
+                {% for ret in sales_returns %}
+                <div
+                    class="bg-white rounded-[2rem] p-6 border border-gray-100 hover:border-amber-200 hover:shadow-lg hover:shadow-amber-500/5 transition-all group">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-6">
+                            <!-- Date Box -->
+                            <div
+                                class="flex flex-col items-center justify-center w-16 h-16 bg-amber-50 rounded-2xl border border-amber-100 text-amber-900 group-hover:scale-105 transition-transform">
+                                <span class="text-xs font-bold uppercase">{{ ret.date|date:"M" }}</span>
+                                <span class="text-xl font-black">{{ ret.date|date:"d" }}</span>
+                            </div>
+
+                            <!-- Info -->
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-900">{{ ret.customer.name }}</h3>
+                                <div class="flex items-center gap-2 text-sm font-medium text-gray-500 mt-0.5">
+                                    {% if ret.original_sale %}
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs">Ref: #{{
+                                        ret.original_sale.invoice_number }}</span>
+                                    {% else %}
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs">Direct Return</span>
+                                    {% endif %}
+                                    <span>•</span>
+                                    <span>{{ ret.date|date:"Y" }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Amount -->
+                        <div class="text-right">
+                            <p class="text-amber-600 font-bold text-xl">₹{{ ret.refund_amount|intcomma }}</p>
+                            <p class="text-xs text-amber-400 font-bold uppercase tracking-wider">Refunded</p>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-20 bg-white rounded-[3rem] border border-dashed border-gray-200">
+                    <div class="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+                        </svg>
+                    </div>
+                    <p class="text-gray-500 font-medium">No customer returns found</p>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- PURCHASE RETURN LIST -->
+            <div x-show="tab === 'purchase'" style="display: none;"
+                x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2"
+                x-transition:enter-end="opacity-100 translate-y-0" class="space-y-4">
+                {% for ret in purchase_returns %}
+                <div
+                    class="bg-white rounded-[2rem] p-6 border border-gray-100 hover:border-red-200 hover:shadow-lg hover:shadow-red-500/5 transition-all group">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-6">
+                            <!-- Date Box -->
+                            <div
+                                class="flex flex-col items-center justify-center w-16 h-16 bg-red-50 rounded-2xl border border-red-100 text-red-900 group-hover:scale-105 transition-transform">
+                                <span class="text-xs font-bold uppercase">{{ ret.date|date:"M" }}</span>
+                                <span class="text-xl font-black">{{ ret.date|date:"d" }}</span>
+                            </div>
+
+                            <!-- Info -->
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-900">{{ ret.supplier.name }}</h3>
+                                <div class="flex items-center gap-2 text-sm font-medium text-gray-500 mt-0.5">
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs select-all">{{ ret.reason
+                                        }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Amount -->
+                        <div class="text-right">
+                            <p class="text-red-600 font-bold text-xl">₹{{ ret.total_refund_amount|intcomma }}</p>
+                            <p class="text-xs text-red-400 font-bold uppercase tracking-wider">Received</p>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-20 bg-white rounded-[3rem] border border-dashed border-gray-200">
+                    <div class="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+                        </svg>
+                    </div>
+                    <p class="text-gray-500 font-medium">No supplier returns found</p>
+                </div>
+                {% endfor %}
+            </div>
+
         </div>
     </div>
 
-    <div x-show="tab === 'purchase'" style="display: none;">
-        <div class="overflow-x-auto shadow-md rounded-lg mb-8">
-            <table class="min-w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-red-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">Date</th>
-                        <th scope="col" class="px-6 py-3">Supplier</th>
-                        <th scope="col" class="px-6 py-3">Refund Amount</th>
-                        <th scope="col" class="px-6 py-3">Reason</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ret in purchase_returns %}
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ ret.date }}</td>
-                        <td class="px-6 py-4 font-medium text-gray-900">{{ ret.supplier.name }}</td>
-                        <td class="px-6 py-4 font-bold text-red-600">₹{{ ret.total_refund_amount }}</td>
-                        <td class="px-6 py-4">{{ ret.reason }}</td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="4" class="px-6 py-4 text-center">No returns found.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    <!-- RIGHT COLUMN: Sticky Stats -->
+    <div class="hidden xl:block xl:w-[400px] bg-white border-l border-gray-100 z-40">
+        <div class="sticky top-0 h-screen overflow-y-auto p-8 custom-scrollbar">
+
+            <h2 class="text-lg font-bold text-gray-900 mb-8">Returns Overview</h2>
+
+            <!-- Inward Impact -->
+            <div
+                class="bg-amber-50/50 rounded-[2.5rem] p-8 border border-amber-100 mb-6 relative overflow-hidden group">
+                <div class="relative z-10">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="p-2 bg-amber-100 rounded-lg text-amber-600">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                            </svg>
+                        </div>
+                        <span class="text-sm font-bold text-amber-900 uppercase tracking-wider">Total Refunds
+                            Given</span>
+                    </div>
+                    <p class="text-4xl font-black text-amber-700 tracking-tight">₹{{ total_sales_refunds|intcomma }}</p>
+                    <p class="text-sm text-amber-600/80 mt-2 font-medium">Customer Returns</p>
+                </div>
+                <div
+                    class="absolute -right-6 -bottom-6 w-32 h-32 bg-amber-100 rounded-full opacity-50 group-hover:scale-110 transition-transform">
+                </div>
+            </div>
+
+            <!-- Outward Impact -->
+            <div class="bg-red-50/50 rounded-[2.5rem] p-8 border border-red-100 relative overflow-hidden group">
+                <div class="relative z-10">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="p-2 bg-red-100 rounded-lg text-red-600">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                            </svg>
+                        </div>
+                        <span class="text-sm font-bold text-red-900 uppercase tracking-wider">Total Refunds
+                            Received</span>
+                    </div>
+                    <p class="text-4xl font-black text-red-700 tracking-tight">₹{{ total_purchase_refunds|intcomma }}
+                    </p>
+                    <p class="text-sm text-red-600/80 mt-2 font-medium">Supplier Returns</p>
+                </div>
+                <div
+                    class="absolute -right-6 -bottom-6 w-32 h-32 bg-red-100 rounded-full opacity-50 group-hover:scale-110 transition-transform">
+                </div>
+            </div>
+
+            <!-- Helper Info -->
+            <div class="mt-12 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                <h4 class="font-bold text-gray-900 mb-2">Did you know?</h4>
+                <p class="text-sm text-gray-500 leading-relaxed">
+                    Returns impact your inventory counts immediately.
+                    <strong class="text-gray-700">Inward returns</strong> increase stock, while <strong
+                        class="text-gray-700">outward returns</strong> decrease it.
+                </p>
+            </div>
+
         </div>
     </div>
-
 </div>
 {% endblock %}

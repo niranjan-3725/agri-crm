@@ -10,6 +10,17 @@
 
             <!-- Header -->
             <header class="flex flex-col gap-2">
+                <!-- Back Button -->
+                <a href="{% url 'sales_list' %}"
+                    class="group flex items-center gap-2 text-gray-400 hover:text-gray-900 transition-colors w-fit mb-2">
+                    <svg class="w-4 h-4 group-hover:-translate-x-1 transition-transform"
+                        xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m15 18-6-6 6-6" />
+                    </svg>
+                    <span class="text-xs font-bold uppercase tracking-widest">Back to Sales</span>
+                </a>
+
                 <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
                     <span class="bg-green-50 text-green-600 px-2 py-1 rounded">Transactions</span>
                     <span>•</span>
