@@ -208,17 +208,24 @@ def create_sale(request):
                         
                     batch = Batch.objects.get(id=batch_id)
                     
-                    # Calculations
+                    # Calculations (Sprint 45: Back-calculate tax from Total)
+                    # Input Price is Final Selling Price (Tax Inclusive)
+                    total = price * qty
                     tax_rate = batch.product.category.total_tax
-                    tax_amount = (price * qty * float(tax_rate)) / 100
-                    total = (price * qty) + tax_amount
+                    tax_rate_float = float(tax_rate)
+                    
+                    # Back Calculate Tax
+                    # Total = Taxable * (1 + Rate/100)
+                    # Taxable = Total / (1 + Rate/100)
+                    taxable_value = total / (1 + (tax_rate_float / 100))
+                    tax_amount = total - taxable_value
                     
                     # Create Item (Signals will handle stock deduction)
                     item = SalesItem(
                         invoice=invoice,
                         batch=batch,
                         quantity=qty,
-                        unit_price=price,
+                        unit_price=price, # Storing Tax-Inclusive Price
                         tax_rate=tax_rate,
                         tax_amount=tax_amount,
                         total_amount=total
@@ -227,7 +234,7 @@ def create_sale(request):
                     item.clean()
                     item.save()
                     
-                    total_taxable += (price * qty)
+                    total_taxable += taxable_value
                     # Approximate split
                     total_cgst += tax_amount / 2
                     total_sgst += tax_amount / 2
@@ -383,17 +390,21 @@ def edit_sale(request, pk):
                         
                     batch = Batch.objects.get(id=batch_id)
                     
-                    # Calculations
+                    # Calculations (Sprint 45: Back-calculate tax from Total)
+                    total = price * qty
                     tax_rate = batch.product.category.total_tax
-                    tax_amount = (price * qty * float(tax_rate)) / 100
-                    total = (price * qty) + tax_amount
+                    tax_rate_float = float(tax_rate)
+                    
+                    # Back Calculate Tax
+                    taxable_value = total / (1 + (tax_rate_float / 100))
+                    tax_amount = total - taxable_value
                     
                     # Create Item
                     item = SalesItem(
                         invoice=invoice,
                         batch=batch,
                         quantity=qty,
-                        unit_price=price,
+                        unit_price=price, # Storing Tax-Inclusive Price
                         tax_rate=tax_rate,
                         tax_amount=tax_amount,
                         total_amount=total
@@ -403,7 +414,7 @@ def edit_sale(request, pk):
                     
                     # Stock deducted by signal
                     
-                    total_taxable += (price * qty)
+                    total_taxable += taxable_value
                     total_cgst += tax_amount / 2
                     total_sgst += tax_amount / 2
                     grand_total += total
@@ -1346,39 +1357,67 @@ def delete_customer_payment(request, pk):
 
 def customer_ledger(request):
     """
-    Sprint 44: Customer Ledger Dashboard
-    Shows net position (Wallet vs Unpaid Invoices) for all customers.
+    Sprint 44: Customer Ledger Dashboard with Search
+    Shows net position (Wallet vs Unpaid Invoices) for customers.
     """
     from django.db.models import Prefetch, Value, DecimalField
     from django.db.models.functions import Coalesce
 
-    # 1. Fetch Active Customers
-    # Prefetch only UNPAID/PARTIAL invoices to avoid fetching full history
+    q = request.GET.get('q', '').strip()
+    
+    # Prefetch only UNPAID/PARTIAL invoices
     unpaid_invoices_pref = Prefetch(
         'salesinvoice_set',
         queryset=SalesInvoice.objects.filter(payment_status__in=['UNPAID', 'PARTIAL']).order_by('date'),
         to_attr='unpaid_invoices'
     )
 
+    # Base query with annotations
     customers = Customer.objects.annotate(
-        # Coalesce to 0 to ensure math works
-        total_due=Coalesce(Sum('salesinvoice__balance_due', filter=Q(salesinvoice__payment_status__in=['UNPAID', 'PARTIAL'])), Value(Decimal('0')), output_field=DecimalField()),
+        total_due=Coalesce(
+            Sum('salesinvoice__balance_due', filter=Q(salesinvoice__payment_status__in=['UNPAID', 'PARTIAL'])), 
+            Value(Decimal('0')), 
+            output_field=DecimalField()
+        ),
     ).annotate(
-        # Calculate Net Position (Wallet - Due) positive = Advance, negative = Collect
         net_position=ExpressionWrapper(F('wallet_balance') - F('total_due'), output_field=DecimalField())
-    ).filter(
-        Q(total_due__gt=0) | Q(wallet_balance__gt=0)
-    ).prefetch_related(unpaid_invoices_pref).order_by('-total_due')
+    )
+    
+    # Filtering logic
+    if q:
+        # Search: Show all matching customers including zero-balance
+        customers = customers.filter(
+            Q(name__icontains=q) | Q(mobile_no__icontains=q)
+        )
+    else:
+        # Default: Only show customers with active balance
+        customers = customers.filter(
+            Q(total_due__gt=0) | Q(wallet_balance__gt=0)
+        )
+    
+    customers = customers.prefetch_related(unpaid_invoices_pref).order_by('-total_due')
 
-    # 2. Market Stats
-    market_outstanding = customers.aggregate(Sum('total_due'))['total_due__sum'] or 0
-    total_advances = customers.aggregate(Sum('wallet_balance'))['wallet_balance__sum'] or 0
-
-    return render(request, 'transactions/receivables_dashboard.html', {
+    # Market Stats (only for non-search view)
+    if not q:
+        market_outstanding = customers.aggregate(Sum('total_due'))['total_due__sum'] or 0
+        total_advances = customers.aggregate(Sum('wallet_balance'))['wallet_balance__sum'] or 0
+    else:
+        market_outstanding = 0
+        total_advances = 0
+    
+    context = {
         'customers': customers,
         'market_outstanding': market_outstanding,
         'total_advances': total_advances,
-    })
+        'q': q,
+        'is_search_result': bool(q),
+    }
+    
+    # HTMX partial response
+    if request.headers.get('HX-Request'):
+        return render(request, 'transactions/partials/receivables_customer_list.html', context)
+    
+    return render(request, 'transactions/receivables_dashboard.html', context)
 
 @csrf_exempt
 @require_POST
