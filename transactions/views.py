@@ -426,6 +426,41 @@ def edit_sale(request, pk):
                 invoice.grand_total = grand_total
                 invoice.save()
                 
+                # Sprint 22: Payment Status Tracking for Edit
+                # Logic: Create CustomerPayment which triggers signal update_sales_invoice_payment_status
+                payment_status = request.POST.get('payment_status', 'UNPAID')
+                amount_rec_str = request.POST.get('amount_received')
+                
+                # We need to handle the incremental payment
+                # If user says "PAID", they want to pay the *remaining* balance.
+                # If "PARTIAL", they are paying a specific amount *now*.
+                
+                payment_amount_to_record = Decimal('0.00')
+                
+                # Current status (before this edit's payment)
+                # invoice.amount_received is already up to date from previous payments
+                
+                if payment_status == 'PAID':
+                     # Pay off the entire remaining balance
+                     # Balance Due = Grand Total - Amount Received
+                     payment_amount_to_record = invoice.grand_total - invoice.amount_received
+                     if payment_amount_to_record < 0: payment_amount_to_record = 0
+                     
+                elif payment_status == 'PARTIAL' and amount_rec_str:
+                     # This is the *new* payment amount being added, NOT the total paid
+                     # But wait, the UI usually shows "Amount Received" as the *current transaction's* payment in POS
+                     # Let's assume the input is the "amount being paid right now".
+                     payment_amount_to_record = Decimal(amount_rec_str)
+                
+                if payment_amount_to_record > 0:
+                    CustomerPayment.objects.create(
+                        invoice=invoice,
+                        amount=payment_amount_to_record,
+                        payment_date=invoice.date, # Assume payment on same date
+                        payment_mode='CASH', # Default for quick sale
+                        notes='Additional Payment via Sales Edit'
+                    )
+                
                 return redirect('invoice_detail', pk=invoice.pk)
                 
         except ValidationError as e:
@@ -452,7 +487,8 @@ def edit_sale(request, pk):
         'customers': customers,
         'batches': batches,
         'existing_items': existing_items,
-        'existing_items_json': json.dumps(existing_items)
+        'existing_items_json': json.dumps(existing_items),
+        'amount_paid': float(invoice.amount_received)
     })
 
 def purchase_list(request):
@@ -583,6 +619,14 @@ def record_payment(request):
     notes = request.POST.get('notes', '') # Capture notes
     
     invoice = get_object_or_404(PurchaseInvoice, id=invoice_id)
+    
+    # Sprint 49: Universal Zero-Negative Safeguard
+    if amount <= 0:
+         return JsonResponse({'success': False, 'error': 'Payment must be positive.'}, status=400)
+
+    # Sprint 48: Strict Payment Validation for Suppliers
+    if amount > invoice.balance_due:
+        return JsonResponse({'success': False, 'error': f'Payment amount (₹{amount}) cannot exceed balance due (₹{invoice.balance_due}).'}, status=400)
     
     # Create Payment (Signal updates invoice balance/status)
     SupplierPayment.objects.create(
@@ -1329,14 +1373,31 @@ def record_receipt(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
     if request.method == 'POST':
         try:
-            amount = request.POST.get('amount')
+            amount = Decimal(request.POST.get('amount'))
             payment_mode = request.POST.get('payment_mode')
             payment_date = request.POST.get('payment_date') or timezone.now().date()
             notes = request.POST.get('notes')
+
+            # Sprint 49: Universal Zero-Negative Safeguard
+            if amount <= 0:
+                 return JsonResponse({'success': False, 'error': 'Payment must be positive.'}, status=400)
+            
+            # Sprint 47: Smart Overpayment Handling
+            excess_amount = amount - invoice.balance_due
+            payment_amount = amount
+
+            if excess_amount > 0:
+                payment_amount = invoice.balance_due
+                # Credit excess to wallet
+                if invoice.customer:
+                    customer = invoice.customer
+                    customer.wallet_balance += excess_amount
+                    customer.save()
+                    notes = f"{notes} (Overpayment of ₹{excess_amount} added to Wallet)" if notes else f"(Overpayment of ₹{excess_amount} added to Wallet)"
             
             CustomerPayment.objects.create(
                 invoice=invoice,
-                amount=amount,
+                amount=payment_amount,
                 payment_mode=payment_mode,
                 payment_date=payment_date,
                 notes=notes
@@ -1358,11 +1419,13 @@ def delete_customer_payment(request, pk):
 def customer_ledger(request):
     """
     Sprint 44: Customer Ledger Dashboard with Search
+    Sprint 46: Added collected_this_month and recent_receipts for parity with Payables.
     Shows net position (Wallet vs Unpaid Invoices) for customers.
     """
     from django.db.models import Prefetch, Value, DecimalField
     from django.db.models.functions import Coalesce
 
+    now = timezone.now()
     q = request.GET.get('q', '').strip()
     
     # Prefetch only UNPAID/PARTIAL invoices
@@ -1405,10 +1468,24 @@ def customer_ledger(request):
         market_outstanding = 0
         total_advances = 0
     
+    # Sprint 46: Collection KPIs
+    # Collected this month (exclude WALLET - only real cash/UPI flow)
+    collected_this_month = CustomerPayment.objects.filter(
+        payment_date__year=now.year,
+        payment_date__month=now.month
+    ).exclude(payment_mode='WALLET').aggregate(Sum('amount'))['amount__sum'] or 0
+    
+    # Recent receipts for activity timeline (last 10)
+    recent_receipts = CustomerPayment.objects.select_related(
+        'invoice', 'invoice__customer'
+    ).order_by('-created_at')[:10]
+    
     context = {
         'customers': customers,
         'market_outstanding': market_outstanding,
         'total_advances': total_advances,
+        'collected_this_month': collected_this_month,
+        'recent_receipts': recent_receipts,
         'q': q,
         'is_search_result': bool(q),
     }
