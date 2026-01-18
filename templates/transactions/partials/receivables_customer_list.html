@@ -5,8 +5,8 @@
     {% if c.total_due == 0 and c.wallet_balance == 0 %}
     <!-- Clean Slate Card -->
     <div class="bg-gray-50 rounded-3xl p-6 border border-gray-200 opacity-75">
-        <div class="flex items-center gap-4">
-            <div class="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+        <div class="flex items-center gap-4 w-full">
+            <div class="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center shrink-0">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                 </svg>
@@ -15,16 +15,31 @@
                 <h3 class="font-bold text-lg text-gray-600">{{ c.name }}</h3>
                 <p class="text-sm text-green-600 font-medium">No Pending Dues</p>
             </div>
+
+            <!-- History Link -->
+            <a href="{% url 'wallet_passbook' c.id %}"
+                class="ml-auto p-2 rounded-full hover:bg-gray-200 text-gray-400 hover:text-purple-600 transition-colors"
+                title="View Financial History">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path
+                        d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253">
+                    </path>
+                </svg>
+            </a>
         </div>
     </div>
     {% else %}
     <!-- Standard Receivables Card -->
-    <div x-data="{ expanded: false }" class="bg-white rounded-3xl p-6 border border-gray-100 hover:shadow-lg transition-all cursor-pointer" @click="expanded = !expanded">
+    <div x-data="{ expanded: false }"
+        class="bg-white rounded-3xl p-6 border border-gray-100 hover:shadow-lg transition-all cursor-pointer"
+        @click="expanded = !expanded">
         <!-- Summary Row -->
         <div class="flex justify-between items-center">
             <!-- Profile -->
             <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center font-bold text-xl">{{ c.name|slice:":1" }}</div>
+                <div
+                    class="w-12 h-12 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center font-bold text-xl">
+                    {{ c.name|slice:":1" }}</div>
                 <div>
                     <h3 class="font-bold text-lg text-gray-900">{{ c.name }}</h3>
                     <p class="text-xs text-gray-400 font-mono">{{ c.mobile_no }}</p>
@@ -37,17 +52,30 @@
                     <p class="font-bold text-red-600 text-lg">{% if c.total_due > 0 %}&#8377;{{ c.total_due|intcomma }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
                 </div>
                 <div class="text-right">
-                    <p class="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Wallet Credit</p>
+                    <div class="flex items-center justify-end gap-1">
+                        <p class="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Wallet Credit</p>
+                        <a href="{% url 'wallet_passbook' c.id %}" @click.stop
+                            class="text-gray-300 hover:text-purple-600 transition-colors" title="View Wallet History">
+                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path
+                                    d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253">
+                                </path>
+                            </svg>
+                        </a>
+                    </div>
                     <p class="font-bold text-green-600 text-lg">{% if c.wallet_balance > 0 %}&#8377;{{ c.wallet_balance|intcomma }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
                 </div>
                 <!-- Net Position -->
-                {% if c.net_position < 0 %}
-                <span class="px-4 py-2 bg-red-50 text-red-700 rounded-xl font-bold text-sm whitespace-nowrap">Collect &#8377;{{ c.net_position|stringformat:".2f"|slice:"1:"|intcomma }}</span>
-                {% elif c.net_position > 0 %}
-                <span class="px-4 py-2 bg-green-50 text-green-700 rounded-xl font-bold text-sm whitespace-nowrap">Advance &#8377;{{ c.net_position|intcomma }}</span>
-                {% else %}
-                <span class="px-4 py-2 bg-gray-50 text-gray-500 rounded-xl font-bold text-sm">Settled</span>
-                {% endif %}
+                {% if c.net_position < 0 %} <span
+                    class="px-4 py-2 bg-red-50 text-red-700 rounded-xl font-bold text-sm whitespace-nowrap">Collect
+                    &#8377;{{ c.net_position|stringformat:".2f"|slice:"1:"|intcomma }}</span>
+                    {% elif c.net_position > 0 %}
+                    <span
+                        class="px-4 py-2 bg-green-50 text-green-700 rounded-xl font-bold text-sm whitespace-nowrap">Advance
+                        &#8377;{{ c.net_position|intcomma }}</span>
+                    {% else %}
+                    <span class="px-4 py-2 bg-gray-50 text-gray-500 rounded-xl font-bold text-sm">Settled</span>
+                    {% endif %}
             </div>
         </div>
 
@@ -56,7 +84,8 @@
             <h4 class="font-bold text-gray-900 mb-4 px-2">Unpaid Invoices</h4>
             <div class="bg-gray-50 rounded-2xl p-4 space-y-2">
                 {% for invoice in c.unpaid_invoices %}
-                <div class="flex justify-between items-center py-3 px-4 bg-white rounded-xl border border-gray-100 shadow-sm">
+                <div
+                    class="flex justify-between items-center py-3 px-4 bg-white rounded-xl border border-gray-100 shadow-sm">
                     <div>
                         <span class="font-bold text-gray-800 block">#{{ invoice.invoice_number }}</span>
                         <span class="text-gray-400 text-xs">{{ invoice.date }}</span>
@@ -67,16 +96,29 @@
                             <span class="text-red-500 font-bold">&#8377;{{ invoice.balance_due|intcomma }}</span>
                         </div>
                         <!-- Sprint 46: Record Cash/UPI Button -->
-                        <button type="button" @click="$dispatch('open-receipt-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })" class="px-4 py-2 bg-gray-900 text-white text-xs font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg flex items-center gap-1">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        <button type="button"
+                            @click="$dispatch('open-receipt-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })"
+                            class="px-4 py-2 bg-gray-900 text-white text-xs font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
                             <span>Cash/UPI</span>
                         </button>
                         {% if c.wallet_balance >= invoice.balance_due and c.wallet_balance > 0 %}
-                        <button type="button" @click="$dispatch('open-settle-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })" class="px-4 py-2 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-md shadow-purple-200">Pay via Wallet</button>
+                        <button type="button"
+                            @click="$dispatch('open-settle-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })"
+                            class="px-4 py-2 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-700 transition-colors shadow-md shadow-purple-200">Pay
+                            via Wallet</button>
                         {% elif c.wallet_balance > 0 %}
-                        <button type="button" @click="$dispatch('open-settle-modal', { id: '{{ invoice.id }}', amount: '{{ c.wallet_balance }}', number: '{{ invoice.invoice_number }}' })" class="px-4 py-2 bg-amber-500 text-white text-xs font-bold rounded-lg hover:bg-amber-600 transition-colors shadow-md shadow-amber-200">Partial Pay</button>
+                        <button type="button"
+                            @click="$dispatch('open-settle-modal', { id: '{{ invoice.id }}', amount: '{{ c.wallet_balance }}', number: '{{ invoice.invoice_number }}' })"
+                            class="px-4 py-2 bg-amber-500 text-white text-xs font-bold rounded-lg hover:bg-amber-600 transition-colors shadow-md shadow-amber-200">Partial
+                            Pay</button>
                         {% else %}
-                        <button disabled class="px-4 py-2 bg-gray-100 text-gray-400 text-xs font-bold rounded-lg cursor-not-allowed">No Wallet</button>
+                        <button disabled
+                            class="px-4 py-2 bg-gray-100 text-gray-400 text-xs font-bold rounded-lg cursor-not-allowed">No
+                            Wallet</button>
                         {% endif %}
                     </div>
                 </div>
@@ -92,7 +134,8 @@
     <div class="text-center py-20">
         <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
             </svg>
         </div>
         <h3 class="text-xl font-bold text-gray-900">No Results</h3>
@@ -102,7 +145,9 @@
     <div class="text-center py-20">
         <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z">
+                </path>
             </svg>
         </div>
         <h3 class="text-xl font-bold text-gray-900">All Settled!</h3>

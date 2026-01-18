@@ -1,4 +1,4 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 {% load humanize %}
 
 {% block content %}
@@ -109,8 +109,7 @@
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="font-bold text-gray-900 text-sm">{{ payment.invoice.customer.name }}</p>
-                            <p class="text-xs text-gray-400">via {{ payment.payment_mode }} &bull; {{
-                                payment.created_at|timesince }} ago</p>
+                            <p class="text-xs text-gray-400">via {{ payment.payment_mode }} &bull; {{ payment.created_at|timesince }} ago</p>
                         </div>
                         <p class="text-emerald-600 font-bold text-sm">+&#8377;{{ payment.amount|intcomma }}</p>
                     </div>
@@ -155,7 +154,8 @@
                                 Payment</h3>
                             <div class="mt-2">
                                 <p class="text-sm text-gray-500">Are you sure you want to deduct <span
-                                        class="font-bold text-gray-900" x-text="'₹' + amount"></span> from the wallet to
+                                        class="font-bold text-gray-900" x-text="'\u20B9' + amount"></span> from the
+                                    wallet to
                                     pay Invoice <span class="font-bold text-gray-900"
                                         x-text="'#' + invoiceNumber"></span>?</p>
                             </div>
@@ -199,7 +199,8 @@
                     <div class="space-y-2">
                         <label class="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Amount</label>
                         <div class="relative">
-                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">₹</span>
+                            <span
+                                class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">&#8377;</span>
                             <input type="number" step="0.01" min="0.01" name="amount" x-model="receiptAmount"
                                 class="w-full bg-gray-50 border border-transparent focus:bg-white focus:border-emerald-500 rounded-xl py-4 pl-10 pr-4 text-xl font-bold text-gray-900 outline-none transition-all">
                         </div>

@@ -1,0 +1,4 @@
+/* Passbook specific styles if needed */
+.passbook-table-container {
+    overflow-x: auto;
+}

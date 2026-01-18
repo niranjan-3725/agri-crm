@@ -13,15 +13,31 @@ def update_sales_invoice_payment_status(sender, instance, **kwargs):
     invoice = instance.invoice
     
     # Sprint 44: Wallet Logic
-    if instance.payment_mode == 'WALLET' and invoice.customer:
+    
+    # Sprint 44 & 51: Wallet Logic (Inflow/Outflow)
+    if invoice.customer:
         customer = invoice.customer
-        if kwargs.get('created', False):
-            # Deduction on Creation
-            customer.wallet_balance -= instance.amount
-            customer.save()
-        elif kwargs.get('signal') == post_delete:
-            # Refund on Deletion
-            customer.wallet_balance += instance.amount
+        should_save = False
+        
+        # Outflow (Debit): Usage or Refund
+        if instance.payment_mode in ['WALLET', 'REFUND']:
+            if kwargs.get('created', False):
+                customer.wallet_balance -= instance.amount
+                should_save = True
+            elif kwargs.get('signal') == post_delete:
+                customer.wallet_balance += instance.amount
+                should_save = True
+        
+        # Inflow (Credit): Return or Manual Credit
+        elif instance.payment_mode == 'WALLET_CREDIT':
+            if kwargs.get('created', False):
+                customer.wallet_balance += instance.amount
+                should_save = True
+            elif kwargs.get('signal') == post_delete:
+                customer.wallet_balance -= instance.amount
+                should_save = True
+                
+        if should_save:
             customer.save()
     
     # Calculate total received

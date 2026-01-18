@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="min-h-screen bg-[#F2F2F7] p-8" x-data="{ showReversalModal: false, reversalUrl: '', reversalAmount: '' }">
+    <!-- Breadcrumb -->
+    <div class="max-w-5xl mx-auto mb-8">
+        <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
+            <a href="{% url 'customer_ledger' %}" class="hover:text-gray-600 transition-colors">Receivables</a>
+            <span>/</span>
+            <span>Passbook</span>
+        </div>
+
+        <div class="flex items-start justify-between">
+            <div>
+                <h1 class="text-4xl font-bold text-gray-900 tracking-tight mb-2">{{ customer.name }}</h1>
+                <p class="text-gray-500 font-medium">Wallet Transaction History</p>
+            </div>
+
+            <!-- Hero Card: Current Balance -->
+            <div
+                class="bg-white rounded-2xl p-6 border border-gray-100 shadow-lg shadow-gray-200/50 flex flex-col items-end">
+                <span class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Current Balance</span>
+                <span
+                    class="text-3xl font-bold {% if customer.wallet_balance > 0 %}text-green-600{% else %}text-gray-400{% endif %}">
+                    ₹{{ customer.wallet_balance|intcomma }}
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Passbook Table -->
+    <div
+        class="max-w-5xl mx-auto bg-white rounded-[2.5rem] shadow-xl shadow-gray-200/50 overflow-hidden border border-gray-100">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100">
+                        <th class="py-5 px-8 text-xs font-bold text-gray-400 uppercase tracking-widest w-1/6">Date</th>
+                        <th class="py-5 px-8 text-xs font-bold text-gray-400 uppercase tracking-widest w-2/6">
+                            Particulars</th>
+                        <th
+                            class="py-5 px-8 text-xs font-bold text-green-600 uppercase tracking-widest text-right w-1/6">
+                            Credit (In)</th>
+                        <th class="py-5 px-8 text-xs font-bold text-red-500 uppercase tracking-widest text-right w-1/6">
+                            Debit (Out)</th>
+                        <th
+                            class="py-5 px-8 text-xs font-bold text-gray-900 uppercase tracking-widest text-right w-1/6">
+                            Balance</th>
+                        <th
+                            class="py-5 px-8 text-xs font-bold text-gray-400 uppercase tracking-widest text-center w-1/12">
+                            Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for entry in entries %}
+                    <!-- Logic to check for Reversal -->
+                    <tr
+                        class="hover:bg-gray-50/50 transition-colors group {% if 'Reversal' in entry.notes %}opacity-60 bg-gray-50/50 grayscale{% endif %}">
+                        <!-- Date -->
+                        <td class="py-5 px-8">
+                            <div class="font-bold text-gray-900 text-sm">{{ entry.date|date:"d M, Y" }}</div>
+                            <div class="text-xs text-gray-400">{{ entry.date|time:"h:i A" }}</div>
+                        </td>
+
+                        <!-- Particulars -->
+                        <td class="py-5 px-8">
+                            <div class="flex flex-col gap-1">
+                                {% if entry.invoice_number != '-' %}
+                                <span class="font-bold text-gray-800 text-sm">Ref: #{{ entry.invoice_number }}</span>
+                                {% endif %}
+                                <span class="text-xs font-medium text-gray-500 italic">{{ entry.notes|default:"-" }}</span>
+                                <span
+                                    class="inline-flex py-0.5 px-2 rounded text-[10px] font-bold uppercase tracking-wider w-fit {% if 'Reversal' in entry.notes %}bg-gray-200 text-gray-600{% elif entry.obj.payment_mode == 'WALLET_CREDIT' %}bg-green-50 text-green-600{% elif entry.obj.payment_mode == 'WALLET' %}bg-purple-50 text-purple-600{% elif entry.obj.payment_mode == 'REFUND' %}bg-red-50 text-red-600{% else %}bg-gray-100 text-gray-500{% endif %}">
+                                    {{ entry.obj.get_payment_mode_display }}
+                                </span>
+                            </div>
+                        </td>
+
+                        <!-- Credit -->
+                        <td class="py-5 px-8 text-right font-bold text-lg text-green-600">
+                            {% if entry.is_credit %}
+                            +₹{{ entry.amount|intcomma }}
+                            {% endif %}
+                        </td>
+
+                        <!-- Debit -->
+                        <td class="py-5 px-8 text-right font-bold text-lg text-red-500">
+                            {% if entry.is_debit %}
+                            -₹{{ entry.amount|intcomma }}
+                            {% endif %}
+                        </td>
+
+                        <!-- Balance -->
+                        <td class="py-5 px-8 text-right font-bold text-lg text-gray-900 bg-gray-50/30">
+                            ₹{{ entry.balance|intcomma }}
+                        </td>
+
+                        <!-- Actions (Undo) -->
+                        <td class="py-5 px-8 text-center">
+                            {% if 'Reversal' not in entry.notes %}
+                            <button
+                                @click="showReversalModal = true; reversalUrl = '{% url 'reverse_wallet_transaction' entry.obj.id %}'; reversalAmount = '{{ entry.amount|intcomma }}'"
+                                class="p-2 rounded-xl text-amber-300 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                                title="Void / Reverse Transaction">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+                                </svg>
+                            </button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="py-20 text-center">
+                            <div
+                                class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253">
+                                    </path>
+                                </svg>
+                            </div>
+                            <h3 class="text-gray-900 font-bold mb-1">No wallet activity</h3>
+                            <p class="text-gray-400 text-sm">Transactions will appear here once the wallet is used.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Reversal Confirmation Modal -->
+    <div x-show="showReversalModal" style="display: none;"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm"
+        x-transition.opacity>
+        <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all"
+            @click.away="showReversalModal = false" x-transition.scale>
+            <div class="text-center mb-6">
+                <div
+                    class="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                        </path>
+                    </svg>
+                </div>
+                <h3 class="text-2xl font-bold text-gray-900 mb-2">Reverse Transaction?</h3>
+                <p class="text-gray-500">This will create a counter-entry of <span
+                        class="font-bold text-gray-900">₹<span x-text="reversalAmount"></span></span> to void the
+                    transaction. This action cannot be undone.</p>
+            </div>
+
+            <div class="flex gap-4">
+                <button type="button" @click="showReversalModal = false"
+                    class="flex-1 py-3 px-6 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors">
+                    Cancel
+                </button>
+                <button type="button"
+                    @click="fetch(reversalUrl, { method: 'POST', headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value } }).then(r => { if(r.ok) window.location.reload(); else alert('Error reversing transaction'); })"
+                    class="flex-1 py-3 px-6 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 shadow-lg shadow-amber-500/30 transition-colors">
+                    Confirm Void
+                </button>
+            </div>
+        </div>
+    </div>
+    {% csrf_token %}
+</div>
+{% endblock %}

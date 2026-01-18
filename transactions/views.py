@@ -1522,3 +1522,116 @@ def settle_invoice_via_wallet(request, invoice_id):
         messages.error(request, "Insufficient wallet balance or invoice already paid.")
         
     return redirect('customer_ledger')
+
+
+def wallet_passbook(request, pk):
+    """
+    Sprint 50: Customer Wallet Passbook
+    Visualizes wallet history with running balance.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+    
+    # Filter for Wallet-impacting transactions
+    # 1. Payment Mode is WALLET, REFUND, or WALLET_CREDIT
+    # 2. Notes contain "Overpayment" (Excess cash added)
+    transactions = CustomerPayment.objects.filter(
+        invoice__customer=customer
+    ).filter(
+        Q(payment_mode__in=['WALLET', 'REFUND', 'WALLET_CREDIT']) | 
+        Q(notes__icontains='Overpayment')
+    ).select_related('invoice').order_by('created_at')
+
+    # Calculate Running Balance
+    running_balance = Decimal('0.00')
+    passbook_entries = []
+
+    for txn in transactions:
+        is_credit = False
+        is_debit = False
+        amount = txn.amount
+
+        # Logic for Credit vs Debit
+        # Credit (+): Inflow into Wallet (Return or Overpayment)
+        # Debit (-): Outflow from Wallet (Bill Payment or Refund Taken Out)
+        
+        if txn.payment_mode == 'WALLET_CREDIT':
+            # Return credited to wallet
+            is_credit = True
+        elif 'Overpayment' in txn.notes:
+            # Try to parse the specific overpayment amount if possible, else fallback to full amount
+            # Assuming standard format: "(Overpayment of ₹500.00 added to Wallet)"
+            import re
+            match = re.search(r'Overpayment of ₹([\d\.]+)', txn.notes)
+            if match:
+                 try:
+                     amount = Decimal(match.group(1))
+                     is_credit = True
+                 except:
+                     is_credit = True # Fallback
+            else:
+                 is_credit = True
+
+        elif txn.payment_mode in ['WALLET', 'REFUND']:
+            is_debit = True
+
+        # Apply to Balance
+        if is_credit:
+            running_balance += amount
+        elif is_debit:
+            running_balance -= amount
+        
+        # Create entry object
+        entry = {
+            'obj': txn,
+            'date': txn.created_at,
+            'amount': amount,
+            'is_credit': is_credit,
+            'is_debit': is_debit,
+            'balance': running_balance,
+            'notes': txn.notes,
+            'invoice_number': txn.invoice.invoice_number if txn.invoice else '-'
+        }
+        passbook_entries.append(entry)
+
+    # Reverse for display (Newest on top)
+    passbook_entries.reverse()
+
+    return render(request, 'transactions/wallet_passbook.html', {
+        'customer': customer,
+        'entries': passbook_entries,
+        'current_balance': customer.wallet_balance
+    })
+
+
+@csrf_exempt
+@require_POST
+def reverse_wallet_transaction(request, payment_id):
+    """
+    Sprint 51: Reverse a wallet transaction.
+    Creates a counter-entry (Negative Amount) to void a mistake.
+    """
+    original = get_object_or_404(CustomerPayment, pk=payment_id)
+    
+    # 1. Validation: Prevent double reversal
+    # Check if any other payment has this ID in its notes as a reversal
+    reversal_note_pattern = f"Reversal of #{original.id}"
+    if CustomerPayment.objects.filter(notes__icontains=reversal_note_pattern).exists():
+        return JsonResponse({'success': False, 'error': 'Transaction already reversed.'}, status=400)
+
+    # 2. Logic: Create Counter-Entry (Sprint 53: Inverse Reversal)
+    # New Logic: Keep Mode (e.g. WALLET), but use Negative Amount.
+    # Effect: Invoice Sum(500, -500) = 0. Invoice Reverts to Unpaid.
+    # Wallet Signal: balance -= -500 => balance += 500. Restored.
+    
+    reverse_amount = -original.amount
+    new_mode = original.payment_mode
+    
+    CustomerPayment.objects.create(
+        invoice=original.invoice, 
+        amount=reverse_amount,
+        payment_mode=new_mode,
+        payment_date=timezone.now(),
+        notes=f"Reversal of #{original.id} - {original.notes}"
+    )
+    
+    return JsonResponse({'success': True})

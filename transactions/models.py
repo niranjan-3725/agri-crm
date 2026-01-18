@@ -208,6 +208,8 @@ class CustomerPayment(models.Model):
         ('CHEQUE', 'Cheque'),
         ('BANK', 'Bank Transfer'),
         ('WALLET', 'Wallet'),
+        ('REFUND', 'Refund / Withdrawal'),
+        ('WALLET_CREDIT', 'Wallet Credit'),
     ]
     
     invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.CASCADE)
