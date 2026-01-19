@@ -323,6 +323,30 @@ def invoice_detail(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
     return render(request, 'transactions/invoice_detail.html', {'invoice': invoice})
 
+@transaction.atomic
+def delete_invoice(request, pk):
+    invoice = get_object_or_404(SalesInvoice, pk=pk)
+    
+    # Refund Wallet Payments (only positive amounts, reversals are negative)
+    for payment in invoice.payments.filter(amount__gt=0):
+        if payment.payment_mode == 'WALLET':
+            if invoice.customer:
+                invoice.customer.wallet_balance += payment.amount
+                invoice.customer.save()
+                print(f"Refunded {payment.amount} to Wallet for Invoice #{invoice.pk}")
+    
+    # Delete payments in correct order to respect reversal_of FK constraint
+    # First: Delete reversal entries (those that have reversal_of set)
+    invoice.payments.filter(reversal_of__isnull=False).delete()
+    # Then: Delete original payments
+    invoice.payments.all().delete()
+    
+    # Delete the invoice
+    invoice.delete()
+    
+    messages.success(request, "Invoice deleted and wallet refunded if applicable.")
+    return redirect('sales_list')
+
 def edit_sale(request, pk):
     """Edit an existing sales invoice - follows purchase_edit pattern."""
     invoice = get_object_or_404(SalesInvoice, pk=pk)

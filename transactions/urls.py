@@ -15,6 +15,7 @@ urlpatterns = [
     path('sales/', views.sales_list, name='sales_list'),
     path('sales/<int:pk>/', views.invoice_detail, name='invoice_detail'),
     path('sales/<int:pk>/edit/', views.edit_sale, name='edit_sale'),
+    path('invoices/<int:pk>/delete/', views.delete_invoice, name='delete_invoice'),
     path('sales/<int:pk>/record-receipt/', views.record_receipt, name='record_receipt'),
     path('receipt/<int:pk>/delete/', views.delete_customer_payment, name='delete_customer_payment'),
     path('purchases/', views.purchase_list, name='purchase_list'),
