@@ -24,7 +24,6 @@ urlpatterns = [
     path('purchases/<int:pk>/delete/', views.purchase_delete, name='purchase_delete'),
     path('transactions/payable/', views.accounts_payable, name='accounts_payable'),
     path('transactions/receivables/', views.customer_ledger, name='customer_ledger'),
-    path('transactions/wallet-passbook/<int:pk>/', views.wallet_passbook, name='wallet_passbook'),
     path('transactions/wallet/reverse/<int:payment_id>/', views.reverse_wallet_transaction, name='reverse_wallet_transaction'),
     path('invoice/<int:invoice_id>/settle-wallet/', views.settle_invoice_via_wallet, name='settle_invoice_via_wallet'),
     path('transactions/record-payment/', views.record_payment, name='record_payment'),
@@ -34,4 +33,5 @@ urlpatterns = [
     path('returns/purchase/new/', views.create_purchase_return, name='create_purchase_return'),
     path('create-supplier/', views.create_supplier, name='create_supplier'),
     path('create-product/', views.create_product, name='create_product'),
+    path('customer/<int:pk>/statement/', views.customer_statement_view, name='customer_statement'),
 ]

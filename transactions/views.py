@@ -1524,102 +1524,156 @@ def settle_invoice_via_wallet(request, invoice_id):
     return redirect('customer_ledger')
 
 
-def wallet_passbook(request, pk):
+def customer_statement_view(request, pk):
     """
-    Sprint 50: Customer Wallet Passbook
-    Visualizes wallet history with running balance.
+    Sprint 54: Unified Customer Account Statement (Khata)
+    Sprint 54 Fix: Removed SalesReturn (double-counting), fixed WALLET handling.
+    
+    Accounting Logic (must match Dashboard):
+    - Net Position = wallet_balance - total_due
+    - total_due = Sum of balance_due from UNPAID/PARTIAL invoices
+    
+    Statement shows transaction history but final balance must match net_position.
+    WALLET mode payments = internal allocation (no debt change).
     """
+    from datetime import datetime
+    
     customer = get_object_or_404(Customer, pk=pk)
     
-    # Filter for Wallet-impacting transactions
-    # 1. Payment Mode is WALLET, REFUND, or WALLET_CREDIT
-    # 2. Notes contain "Overpayment" (Excess cash added)
-    transactions = CustomerPayment.objects.filter(
-        invoice__customer=customer
-    ).filter(
-        Q(payment_mode__in=['WALLET', 'REFUND', 'WALLET_CREDIT']) | 
-        Q(notes__icontains='Overpayment')
-    ).select_related('invoice').order_by('created_at')
-
+    # Build unified transaction list
+    all_transactions = []
+    
+    # 1. Invoices (Debit - Customer owes more)
+    for inv in SalesInvoice.objects.filter(customer=customer).order_by('date'):
+        all_transactions.append({
+            'obj': inv,
+            'date': inv.date,
+            'created_at': inv.date,
+            'txn_type': 'Invoice',
+            'particulars': f"Invoice #{inv.invoice_number}",
+            'amount': inv.grand_total,
+            'is_debit': True,
+            'is_reversal': False,
+            'is_wallet_allocation': False,
+            'payment_id': None,
+            'can_reverse': False,
+            'payment_mode': None
+        })
+    
+    # 2. Payments (Credit - Customer debt reduces, EXCEPT for WALLET mode)
+    # Sprint 54 Fix: Include ALL payments for this customer (via invoice)
+    for pmt in CustomerPayment.objects.filter(invoice__customer=customer).select_related('invoice').order_by('created_at'):
+        is_reversal = pmt.amount < 0 or pmt.reversal_of is not None
+        pmt_mode = pmt.payment_mode
+        pmt_mode_display = pmt.get_payment_mode_display()
+        
+        # WALLET mode = internal allocation (funds move from wallet to invoice)
+        # This does NOT reduce net debt - it's just allocation of existing credit
+        is_wallet_allocation = (pmt_mode == 'WALLET') and not is_reversal
+        
+        if is_reversal:
+            particulars = f"Reversal ({pmt_mode_display})"
+        elif is_wallet_allocation:
+            particulars = f"Wallet → Invoice #{pmt.invoice.invoice_number}"
+        else:
+            particulars = f"Payment ({pmt_mode_display}) - #{pmt.invoice.invoice_number}"
+        
+        # Determine debit/credit:
+        # - Reversals = debit (debt increases back)
+        # - Wallet allocations = neither (internal movement, but show as credit for visibility)
+        # - Regular payments = credit (debt decreases)
+        
+        all_transactions.append({
+            'obj': pmt,
+            'date': pmt.payment_date,
+            'created_at': pmt.created_at,
+            'txn_type': 'Payment',
+            'particulars': particulars,
+            'amount': abs(pmt.amount),
+            'is_debit': is_reversal,
+            'is_reversal': is_reversal,
+            'is_wallet_allocation': is_wallet_allocation,
+            'payment_id': pmt.id,
+            'can_reverse': not is_reversal and not hasattr(pmt, 'reversal_entry'),
+            'payment_mode': pmt_mode
+        })
+    
+    # NOTE: SalesReturn query REMOVED - Sprint 54 Fix
+    # Returns create WALLET_CREDIT payments which are already captured above.
+    # Adding SalesReturn separately = double-counting bug.
+    
+    # Sort by date, then by created_at for same-day ordering
+    def get_sort_key(x):
+        sort_date = x['date']
+        sort_time = x['created_at']
+        if isinstance(sort_time, datetime):
+            return (sort_date, sort_time)
+        else:
+            naive_dt = datetime.combine(sort_time, datetime.min.time())
+            aware_dt = timezone.make_aware(naive_dt, timezone.get_default_timezone())
+            return (sort_date, aware_dt)
+    
+    all_transactions.sort(key=get_sort_key)
+    
     # Calculate Running Balance
-    running_balance = Decimal('0.00')
-    passbook_entries = []
-
-    for txn in transactions:
-        is_credit = False
-        is_debit = False
-        amount = txn.amount
-
-        # Logic for Credit vs Debit
-        # Credit (+): Inflow into Wallet (Return or Overpayment)
-        # Debit (-): Outflow from Wallet (Bill Payment or Refund Taken Out)
+    # Convention: Positive balance = Customer OWES us (debit balance)
+    #             Negative balance = We OWE customer (credit balance / wallet surplus)
+    balance = Decimal('0.00')
+    
+    for txn in all_transactions:
+        # Only change balance for real money movement, not internal allocations
+        if txn['is_wallet_allocation']:
+            # Wallet usage = internal allocation, no net change
+            # But we still show it in Credit column for visibility
+            pass  # Balance stays the same
+        elif txn['is_debit']:
+            # Invoice or Reversal - debt increases
+            balance += txn['amount']
+        else:
+            # Regular Payment (CASH, UPI, WALLET_CREDIT, REFUND) - debt decreases
+            balance -= txn['amount']
         
-        if txn.payment_mode == 'WALLET_CREDIT':
-            # Return credited to wallet
-            is_credit = True
-        elif 'Overpayment' in txn.notes:
-            # Try to parse the specific overpayment amount if possible, else fallback to full amount
-            # Assuming standard format: "(Overpayment of ₹500.00 added to Wallet)"
-            import re
-            match = re.search(r'Overpayment of ₹([\d\.]+)', txn.notes)
-            if match:
-                 try:
-                     amount = Decimal(match.group(1))
-                     is_credit = True
-                 except:
-                     is_credit = True # Fallback
-            else:
-                 is_credit = True
-
-        elif txn.payment_mode in ['WALLET', 'REFUND']:
-            is_debit = True
-
-        # Apply to Balance
-        if is_credit:
-            running_balance += amount
-        elif is_debit:
-            running_balance -= amount
-        
-        # Create entry object
-        entry = {
-            'obj': txn,
-            'date': txn.created_at,
-            'amount': amount,
-            'is_credit': is_credit,
-            'is_debit': is_debit,
-            'balance': running_balance,
-            'notes': txn.notes,
-            'invoice_number': txn.invoice.invoice_number if txn.invoice else '-'
-        }
-        passbook_entries.append(entry)
-
-    # Reverse for display (Newest on top)
-    passbook_entries.reverse()
-
-    return render(request, 'transactions/wallet_passbook.html', {
+        txn['running_balance'] = balance
+    
+    # Net balance for header display (MUST match Dashboard's net_position)
+    # Dashboard formula: net_position = wallet_balance - total_due
+    # total_due = Sum of balance_due from UNPAID/PARTIAL invoices
+    total_due = SalesInvoice.objects.filter(
+        customer=customer,
+        payment_status__in=['UNPAID', 'PARTIAL']
+    ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0')
+    
+    net_balance = customer.wallet_balance - total_due
+    
+    return render(request, 'transactions/customer_statement.html', {
         'customer': customer,
-        'entries': passbook_entries,
-        'current_balance': customer.wallet_balance
+        'transactions': all_transactions,
+        'net_balance': net_balance,
+        'wallet_balance': customer.wallet_balance,
+        'total_due': total_due
     })
-
 
 @csrf_exempt
 @require_POST
 def reverse_wallet_transaction(request, payment_id):
     """
     Sprint 51: Reverse a wallet transaction.
+    Sprint 54: Uses reversal_of FK for strict double-reversal prevention.
     Creates a counter-entry (Negative Amount) to void a mistake.
     """
     original = get_object_or_404(CustomerPayment, pk=payment_id)
     
-    # 1. Validation: Prevent double reversal
-    # Check if any other payment has this ID in its notes as a reversal
-    reversal_note_pattern = f"Reversal of #{original.id}"
-    if CustomerPayment.objects.filter(notes__icontains=reversal_note_pattern).exists():
+    # Sprint 54: Check via OneToOneField relationship instead of notes pattern
+    # If original already has a reversal_entry, it has been reversed before
+    if hasattr(original, 'reversal_entry'):
         return JsonResponse({'success': False, 'error': 'Transaction already reversed.'}, status=400)
 
-    # 2. Logic: Create Counter-Entry (Sprint 53: Inverse Reversal)
-    # New Logic: Keep Mode (e.g. WALLET), but use Negative Amount.
+    # Also check if this payment IS a reversal itself (can't reverse a reversal)
+    if original.reversal_of is not None:
+        return JsonResponse({'success': False, 'error': 'Cannot reverse a reversal entry.'}, status=400)
+
+    # Logic: Create Counter-Entry (Sprint 53: Inverse Reversal)
+    # Keep Mode (e.g. WALLET), but use Negative Amount.
     # Effect: Invoice Sum(500, -500) = 0. Invoice Reverts to Unpaid.
     # Wallet Signal: balance -= -500 => balance += 500. Restored.
     
@@ -1631,7 +1685,8 @@ def reverse_wallet_transaction(request, payment_id):
         amount=reverse_amount,
         payment_mode=new_mode,
         payment_date=timezone.now(),
-        notes=f"Reversal of #{original.id} - {original.notes}"
+        notes=f"Reversal of #{original.id} - {original.notes}",
+        reversal_of=original  # Sprint 54: Link to original payment via FK
     )
     
     return JsonResponse({'success': True})

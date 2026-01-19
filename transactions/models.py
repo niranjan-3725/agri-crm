@@ -212,13 +212,25 @@ class CustomerPayment(models.Model):
         ('WALLET_CREDIT', 'Wallet Credit'),
     ]
     
-    invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.CASCADE)
+    # Sprint 54: Changed from CASCADE to PROTECT to prevent 'Ghost Invoices'
+    # Deleting an invoice with attached payments will now throw ProtectedError
+    invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.PROTECT)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
     payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES, default='UPI')
     reference_id = models.CharField(max_length=50, blank=True, null=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Sprint 54: Strict reversal linking via FK instead of notes-based pattern matching
+    # Prevents 'Fake Reversals' exploit by linking reversal to original payment by ID
+    reversal_of = models.OneToOneField(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='reversal_entry'
+    )
     
     def __str__(self):
         return f"Receipt {self.amount} for {self.invoice.invoice_number}"

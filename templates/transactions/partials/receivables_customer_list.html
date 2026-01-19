@@ -17,7 +17,7 @@
             </div>
 
             <!-- History Link -->
-            <a href="{% url 'wallet_passbook' c.id %}"
+            <a href="{% url 'customer_statement' c.id %}"
                 class="ml-auto p-2 rounded-full hover:bg-gray-200 text-gray-400 hover:text-purple-600 transition-colors"
                 title="View Financial History">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -49,12 +49,12 @@
             <div class="flex items-center gap-8">
                 <div class="text-right">
                     <p class="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Pending Bills</p>
-                    <p class="font-bold text-red-600 text-lg">{% if c.total_due > 0 %}&#8377;{{ c.total_due|intcomma }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
+                    <p class="font-bold text-red-600 text-lg">{% if c.total_due > 0 %}&#8377;{{ c.total_due|intcomma                         }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
                 </div>
                 <div class="text-right">
                     <div class="flex items-center justify-end gap-1">
                         <p class="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Wallet Credit</p>
-                        <a href="{% url 'wallet_passbook' c.id %}" @click.stop
+                        <a href="{% url 'customer_statement' c.id %}" @click.stop
                             class="text-gray-300 hover:text-purple-600 transition-colors" title="View Wallet History">
                             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path
@@ -63,7 +63,7 @@
                             </svg>
                         </a>
                     </div>
-                    <p class="font-bold text-green-600 text-lg">{% if c.wallet_balance > 0 %}&#8377;{{ c.wallet_balance|intcomma }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
+                    <p class="font-bold text-green-600 text-lg">{% if c.wallet_balance > 0 %}&#8377;{{                         c.wallet_balance|intcomma }}{% else %}<span class="text-gray-300">-</span>{% endif %}</p>
                 </div>
                 <!-- Net Position -->
                 {% if c.net_position < 0 %} <span
