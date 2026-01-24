@@ -210,11 +210,12 @@ class CustomerPayment(models.Model):
         ('WALLET', 'Wallet'),
         ('REFUND', 'Refund / Withdrawal'),
         ('WALLET_CREDIT', 'Wallet Credit'),
+        ('SALES_RETURN', 'Sales Return Adjustment'),
     ]
     
     # Sprint 54: Changed from CASCADE to PROTECT to prevent 'Ghost Invoices'
-    # Deleting an invoice with attached payments will now throw ProtectedError
-    invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.PROTECT)
+    # Sprint 57: Allow null invoice for generic Wallet Credits (e.g. Sales Return)
+    invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.PROTECT, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
     payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES, default='UPI')
@@ -231,9 +232,23 @@ class CustomerPayment(models.Model):
         on_delete=models.PROTECT,
         related_name='reversal_entry'
     )
+
+    # Sprint 57: Link Payment to SalesReturn for direct financial credit
+    sales_return = models.OneToOneField(
+        'SalesReturn',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='payment_entry'
+    )
     
     def __str__(self):
-        return f"Receipt {self.amount} for {self.invoice.invoice_number}"
+        if self.invoice:
+            return f"Receipt {self.amount} for {self.invoice.invoice_number}"
+        elif self.sales_return:
+            return f"Credit {self.amount} for Return #{self.sales_return.pk}"
+        else:
+            return f"Payment {self.amount} ({self.payment_mode})"
 
 class SalesReturn(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, null=True, blank=True)

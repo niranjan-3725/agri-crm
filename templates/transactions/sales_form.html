@@ -353,7 +353,7 @@
         // Get existing data from Django context (for edit mode)
         const existingItems = {{ existing_items_json| safe |default: "[]"
     }};
-    const existingCustomer = {% if invoice and invoice.customer %}{ id: { { invoice.customer.id } }, name: "{{ invoice.customer.name }}", city: "{{ invoice.customer.city|default:'' }}", mobile_no: "{{ invoice.customer.mobile_no|default:'' }}" } {% else %} null{% endif %};
+    const existingCustomer = {% if invoice and invoice.customer %}{ id: {{ invoice.customer.id }}, name: "{{ invoice.customer.name }}", city: "{{ invoice.customer.city|default:'' }}", mobile_no: "{{ invoice.customer.mobile_no|default:'' }}" } {% else %} null{% endif %};
 
     // Build rows from existing items or create empty row
     let initialRows = [];
@@ -410,7 +410,7 @@
 
         rows: initialRows,
         paymentStatus: {% if invoice %}'{{ invoice.payment_status }}'{% else %} 'PAID'{% endif %},
-    amountReceived: {% if invoice %} { { invoice.amount_received |default: 0 } } {% else %} 0{% endif %},
+    amountReceived: {% if invoice %} {{ invoice.amount_received |default: 0 }} {% else %} 0{% endif %},
 
         // Customer Methods
         async searchCustomers() {

@@ -66,9 +66,17 @@
                                 <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                             </div>
                             {% elif row.txn_type == 'Payment' %}
-                            <div class="w-8 h-8 rounded-full {% if row.is_reversal %}bg-amber-100{% elif row.is_wallet_allocation %}bg-purple-100{% else %}bg-green-100{% endif %} flex items-center justify-center">
-                                <svg class="w-4 h-4 {% if row.is_reversal %}text-amber-600{% elif row.is_wallet_allocation %}text-purple-600{% else %}text-green-600{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    {% if row.is_reversal %}<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>{% elif row.is_wallet_allocation %}<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>{% else %}<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path>{% endif %}
+                            <div class="w-8 h-8 rounded-full {% if row.is_reversal %}bg-amber-100{% elif row.is_sales_return %}bg-blue-100{% elif row.is_wallet_allocation %}bg-purple-100{% else %}bg-green-100{% endif %} flex items-center justify-center">
+                                <svg class="w-4 h-4 {% if row.is_reversal %}text-amber-600{% elif row.is_sales_return %}text-blue-600{% elif row.is_wallet_allocation %}text-purple-600{% else %}text-green-600{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    {% if row.is_reversal %}
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                    {% elif row.is_sales_return %}
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                    {% elif row.is_wallet_allocation %}
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                                    {% else %}
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                                    {% endif %}
                                 </svg>
                             </div>
                             {% endif %}
@@ -81,7 +89,17 @@
                     <td class="py-4 px-6 text-right">{% if row.is_debit %}<span class="font-bold text-red-600">{{ row.amount|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-300">-</span>{% endif %}</td>
                     <td class="py-4 px-6 text-right">{% if row.is_wallet_allocation %}<span class="text-gray-400 italic">({{ row.amount|floatformat:2|intcomma }})</span>{% elif not row.is_debit %}<span class="font-bold text-green-600">{{ row.amount|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-300">-</span>{% endif %}</td>
                     <td class="py-4 px-6 text-right"><span class="font-bold {% if row.running_balance > 0 %}text-red-600{% elif row.running_balance < 0 %}text-green-600{% else %}text-gray-900{% endif %}">{{ row.running_balance|floatformat:2|intcomma }}</span></td>
-                    <td class="py-4 px-8 text-center">{% if row.txn_type == 'Payment' and row.can_reverse %}<button @click="showReversalModal = true; reversalPaymentId = {{ row.payment_id }}; reversalAmount = {{ row.amount }};" class="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-200">Void</button>{% else %}<span class="text-gray-300">-</span>{% endif %}</td>
+                    <td class="py-4 px-8 text-center">
+                        {% if row.is_sales_return and row.obj.sales_return %}
+                            <a href="{% url 'sales_return_detail' row.obj.sales_return.pk %}" class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors" title="View Return (Delete from Returns Page to reverse)">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                            </a>
+                        {% elif row.txn_type == 'Payment' and row.can_reverse %}
+                            <button @click="showReversalModal = true; reversalPaymentId = {{ row.payment_id }}; reversalAmount = {{ row.amount }};" class="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-200">Void</button>
+                        {% else %}
+                            <span class="text-gray-300">-</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% empty %}
                 <tr><td colspan="6" class="py-16 text-center"><p class="text-gray-400 text-lg">No transactions found.</p></td></tr>

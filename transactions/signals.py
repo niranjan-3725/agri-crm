@@ -12,11 +12,15 @@ from .models import SupplierPayment, CustomerPayment
 def update_sales_invoice_payment_status(sender, instance, **kwargs):
     invoice = instance.invoice
     
-    # Sprint 44: Wallet Logic
-    
-    # Sprint 44 & 51: Wallet Logic (Inflow/Outflow)
-    if invoice.customer:
+    # Determine Customer
+    customer = None
+    if invoice:
         customer = invoice.customer
+    elif hasattr(instance, 'sales_return') and instance.sales_return:
+        customer = instance.sales_return.customer
+        
+    # Sprint 44 & 51 & 57: Wallet Logic (Inflow/Outflow)
+    if customer:
         should_save = False
         
         # Outflow (Debit): Usage or Refund
@@ -40,27 +44,29 @@ def update_sales_invoice_payment_status(sender, instance, **kwargs):
         if should_save:
             customer.save()
     
-    # Calculate total received
-    total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-    
-    # Update fields
-    invoice.amount_received = total_received
-    invoice.balance_due = invoice.grand_total - total_received
-    
-    # Determine status
-    if invoice.balance_due <= Decimal('0.01'):
-        invoice.payment_status = 'PAID'
-        if invoice.balance_due < 0:
-            invoice.balance_due = 0
-    elif invoice.balance_due == invoice.grand_total:
-         if invoice.grand_total > 0:
-            invoice.payment_status = 'UNPAID'
-         else:
-            invoice.payment_status = 'PAID'
-    else:
-        invoice.payment_status = 'PARTIAL'
+    # Update Invoice (Only if tied to invoice)
+    if invoice:
+        # Calculate total received
+        total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
         
-    invoice.save()
+        # Update fields
+        invoice.amount_received = total_received
+        invoice.balance_due = invoice.grand_total - total_received
+        
+        # Determine status
+        if invoice.balance_due <= Decimal('0.01'):
+            invoice.payment_status = 'PAID'
+            if invoice.balance_due < 0:
+                invoice.balance_due = 0
+        elif invoice.balance_due == invoice.grand_total:
+             if invoice.grand_total > 0:
+                invoice.payment_status = 'UNPAID'
+             else:
+                invoice.payment_status = 'PAID'
+        else:
+            invoice.payment_status = 'PARTIAL'
+            
+        invoice.save()
 
 @receiver([post_save, post_delete], sender=SupplierPayment)
 def update_invoice_payment_status(sender, instance, **kwargs):

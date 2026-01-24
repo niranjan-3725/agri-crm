@@ -8,11 +8,11 @@
     document.addEventListener('alpine:init', () => {
         Alpine.data('purchaseLogic', () => ({
             rows: {% if existing_items_json %}{{ existing_items_json| safe }}{% else %}[{ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0 }]{% endif %},
-        loading_charges: {% if invoice and invoice.loading_charges %}{ { invoice.loading_charges } } {% else %} 0{% endif %},
-    discount: {% if invoice and invoice.additional_discount %} { { invoice.additional_discount } } {% else %} 0{% endif %},
+        loading_charges: {% if invoice and invoice.loading_charges %}{{ invoice.loading_charges }} {% else %} 0{% endif %},
+    discount: {% if invoice and invoice.additional_discount %} {{ invoice.additional_discount }} {% else %} 0{% endif %},
     // Sprint 22: Payment Status
     payment_status: '{% if invoice and invoice.payment_status %}{{ invoice.payment_status }}{% else %}UNPAID{% endif %}',
-        paid_amount: {% if invoice and invoice.amount_paid %} { { invoice.amount_paid } } {% else %} 0{% endif %},
+        paid_amount: {% if invoice and invoice.amount_paid %} {{ invoice.amount_paid }} {% else %} 0{% endif %},
     suppliers: [
         {% for s in suppliers %}
     { id: "{{ s.id }}", name: "{{ s.name|escapejs }}" },

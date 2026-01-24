@@ -69,14 +69,15 @@
                         <div class="relative group" @click.away="invoiceOpen = false">
                             <input type="hidden" name="original_sale" x-model="invoiceId">
                             <input type="text" x-model="invoiceSearch" @focus="openInvoiceDropdown()"
-                                :disabled="!customerId" placeholder="Select Invoice..."
+                                @input.debounce.300ms="searchInvoices()" :disabled="!customerId"
+                                placeholder="Select Invoice..."
                                 class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed">
 
                             <!-- Dropdown -->
                             <div x-show="invoiceOpen && availableInvoices.length > 0"
                                 class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
                                 style="display: none;">
-                                <template x-for="inv in filteredInvoices()" :key="inv.id">
+                                <template x-for="inv in filteredInvoicesList" :key="inv.id">
                                     <div @click="selectInvoice(inv)"
                                         class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
                                         <div class="font-bold text-gray-900" x-text="'#' + inv.invoice_number"></div>
@@ -88,7 +89,7 @@
                                     </div>
                                 </template>
                                 <!-- No Results -->
-                                <div x-show="filteredInvoices().length === 0"
+                                <div x-show="filteredInvoicesList.length === 0"
                                     class="p-4 text-center text-gray-400 text-sm">
                                     No invoices found.
                                 </div>
@@ -320,16 +321,25 @@
                 this.invoiceId = ''; this.invoiceSearch = '';
                 this.availableInvoices = []; this.availableItems = [];
                 this.rows = []; this.addRow();
+                // Don't load all. Wait for search.
+                this.searchInvoices();
+            },
+
+            async searchInvoices() {
+                if (!this.customerId) return;
                 try {
-                    const res = await fetch(`/get-customer-invoices/?format=json&customer_id=${customerId}`);
+                    const q = this.invoiceSearch || '';
+                    const res = await fetch(`/get-customer-invoices/?format=json&customer_id=${this.customerId}&q=${q}`);
                     this.availableInvoices = await res.json();
+                    if (this.availableInvoices.length > 0) this.invoiceOpen = true;
                 } catch (e) { console.error(e); }
             },
-            openInvoiceDropdown() { if (this.availableInvoices.length > 0) this.invoiceOpen = true; },
-            filteredInvoices() {
-                if (!this.invoiceSearch) return this.availableInvoices;
-                const q = this.invoiceSearch.toLowerCase();
-                return this.availableInvoices.filter(i => i.invoice_number.toLowerCase().includes(q) || i.date.includes(q) || i.grand_total.toString().includes(q));
+
+            openInvoiceDropdown() { this.searchInvoices(); },
+
+            // Removed client-side filtering filteredInvoices()
+            get filteredInvoicesList() {
+                return this.availableInvoices;
             },
             async selectInvoice(inv) {
                 this.invoiceId = inv.id;

@@ -1108,10 +1108,20 @@ def get_customer_invoices(request):
     
     invoices = SalesInvoice.objects.filter(
         customer_id=customer_id, 
-        payment_status__in=['PAID', 'PARTIAL']
+        payment_status__in=['PAID', 'PARTIAL', 'UNPAID']
     ).order_by('-date')
     
     if request.GET.get('format') == 'json':
+        query = request.GET.get('q', '')
+        if query:
+            invoices = invoices.filter(
+                Q(invoice_number__icontains=query) | 
+                Q(grand_total__icontains=query)
+            )
+            
+        # Limit results for performance
+        invoices = invoices[:20]
+        
         data = [{
             'id': inv.id,
             'invoice_number': inv.invoice_number,
@@ -1177,91 +1187,159 @@ def returns_list(request):
 
 def create_sales_return(request):
     # INWARD: Customer returns item to shop. Stock INCREASES.
+    print("DEBUG: create_sales_return called")
+    print(f"DEBUG: request.method = {request.method}")
+    
     if request.method == 'POST':
+        print("DEBUG: Processing POST request")
+        print(f"DEBUG: POST data keys = {list(request.POST.keys())}")
+        
         try:
             with transaction.atomic():
                 customer_id = request.POST.get('customer')
                 date = request.POST.get('date')
+                original_sale_id = request.POST.get('original_sale')
+                
+                print(f"DEBUG: customer_id={customer_id}, date={date}, original_sale_id={original_sale_id}")
+                
+                if not customer_id:
+                    raise ValueError("Customer ID is required")
+                    
                 customer = Customer.objects.get(id=customer_id)
+                print(f"DEBUG: Found customer: {customer}")
+                
+                # Get original sale if provided
+                original_sale = None
+                if original_sale_id:
+                    original_sale = SalesInvoice.objects.get(id=original_sale_id)
+                    print(f"DEBUG: Found original_sale: {original_sale}")
                 
                 sales_return = SalesReturn.objects.create(
                     customer=customer,
+                    original_sale=original_sale,
                     date=date,
                     refund_amount=0
                 )
+                print(f"DEBUG: Created SalesReturn pk={sales_return.pk}")
                 
                 batch_ids = request.POST.getlist('batch_id[]')
                 quantities = request.POST.getlist('qty[]')
+                prices = request.POST.getlist('price[]')
                 
-                total_refund = 0
+                print(f"DEBUG: batch_ids={batch_ids}")
+                print(f"DEBUG: quantities={quantities}")
+                print(f"DEBUG: prices={prices}")
+                
+                grand_total = Decimal('0')
+                items_created = 0
                 
                 for i in range(len(batch_ids)):
-                    if not batch_ids[i] or not quantities[i]: continue
+                    batch_id = batch_ids[i] if i < len(batch_ids) else ''
+                    qty_str = quantities[i] if i < len(quantities) else ''
+                    price_str = prices[i] if i < len(prices) else ''
                     
-                    batch = Batch.objects.get(id=batch_ids[i])
-                    qty = int(quantities[i])
+                    print(f"DEBUG: Processing row {i}: batch_id={batch_id}, qty={qty_str}, price={price_str}")
                     
-                    # Refund amount calculation? 
-                    # Prompt didn't specify input for refund price per item, but usually needed.
-                    # Assuming price is derived or manually input?
-                    # "Loop items and create SalesReturnItem" - Model has refund_amount? 
-                    # No, SalesReturnItem just links batch/qty. SalesReturn has total refund_amount.
-                    # Wait, let's check models. SalesReturnItem DOES NOT have price? 
-                    # Let's check models. -> SalesReturnItem: quantity (only).
-                    # SalesReturn: refund_amount.
-                    # This implies distinct item prices are NOT tracked in SalesReturnItem? 
-                    # Or maybe I should add it? Prompt says: "Create SalesReturnItem".
-                    # Prompt for Template says: "Create sales_return_form... Clone sales_form... Visual Cue orange".
-                    # Sales Form has Price. 
-                    # Let's verify model schema for SalesReturnItem.
+                    if not batch_id or not qty_str:
+                        print(f"DEBUG: Skipping row {i} - empty batch_id or qty")
+                        continue
                     
-                    # Checks model definition for SalesReturnItem:
-                    # class SalesReturnItem(models.Model): ... quantity = models.IntegerField() ...
-                    # It does NOT have price. This is a potential flaw in user design or simplified.
-                    # However, SalesReturn (Header) has total_refund_amount.
-                    # I will collect the total refund from the frontend "Grand Total" or sum of items?
-                    # The form will surely have prices. I should probably add price to SalesReturnItem or just sum it up for the header.
-                    # Given strict instructions "create SalesReturnItem", I'll stick to model.
-                    # I will rely on the Form sending a total refund amount or sum it up.
-                    # Actually, for accurate returns, we usually need per-item refund price.
-                    # I will assume the form calculates total and we save that to Header.
+                    batch = Batch.objects.get(id=batch_id)
+                    qty = int(qty_str)
+                    price = Decimal(price_str) if price_str else Decimal('0')
+                    # price already set above as Decimal
                     
-                    # BUT wait, PurchaseReturnItem HAS refund_price field in models.py (Viewed earlier).
-                    # SalesReturnItem seemingly does not? Let me re-read models.py content I viewed.
-                    # Line 101: class SalesReturnItem... batch, quantity. NO PRICE.
-                    # Okay, so for Sales Return, we only track Qty coming back? And total money out?
-                    # So I will calculate Total Refund from form data but not save per-item price.
+                    print(f"DEBUG: Creating SalesReturnItem for batch={batch}, qty={qty}")
                     
                     SalesReturnItem.objects.create(
                         return_invoice=sales_return,
                         batch=batch,
                         quantity=qty
                     )
+                    items_created += 1
                     
-                    # We might want to capture the rate from the form to calc total, even if not saving to Item.
-                    # Let's assume there is a price[] input in the form (Cloned from sales_form).
+                    # INWARD Stock Adjustment
+                    batch.current_quantity += qty
+                    batch.save()
+                    print(f"DEBUG: Updated batch stock: {batch.current_quantity}")
                     
-                # We need to capture the total refund amount.
-                # Since we don't store per-item price, we should probably ask for a "Total Refund" input 
-                # OR sum up from hidden fields.
-                # Let's sum up from form inputs "price[]" * "qty[]".
-                prices = request.POST.getlist('price[]')
-                grand_total = 0
-                for i in range(len(batch_ids)):
-                     if i < len(prices) and prices[i] and quantities[i]:
-                         grand_total += float(prices[i]) * int(quantities[i])
+                    grand_total += price * qty
+                    
+                print(f"DEBUG: Items created: {items_created}, grand_total: {grand_total}")
                 
                 sales_return.refund_amount = grand_total
                 sales_return.save()
+                print(f"DEBUG: Updated SalesReturn refund_amount to {grand_total}")
                 
+                # Sprint 59: Targeted Return Settlement
+                # If return is linked to an invoice, apply credit directly to that invoice.
+                # Otherwise, give generic wallet credit.
+                target_invoice = sales_return.original_sale
+                payment_mode = 'SALES_RETURN' if target_invoice else 'WALLET_CREDIT'
+                
+                print(f"DEBUG: Creating CustomerPayment with amount={grand_total}, invoice={target_invoice}, mode={payment_mode}")
+                
+                cp = CustomerPayment.objects.create(
+                    invoice=target_invoice, 
+                    amount=grand_total,
+                    payment_mode=payment_mode,
+                    payment_date=date,
+                    notes=f"Return Adjustment #{sales_return.pk}" if target_invoice else f"Auto-credit for Return #{sales_return.pk}",
+                    sales_return=sales_return
+                )
+                print(f"DEBUG: Created CustomerPayment pk={cp.pk}")
+                
+                messages.success(request, f"Sales return created successfully. Refund: ₹{grand_total}")
+                print("DEBUG: SUCCESS - Redirecting to returns_list")
                 return redirect('returns_list')
 
         except Exception as e:
-            customers = Customer.objects.all()
-            batches = Batch.objects.filter(is_active=True, current_quantity__gt=0) 
-            # Note: For returns, we might return items even if 0 stock? Yes.
-            # But the dropdown usually shows batches.
-            return render(request, 'transactions/sales_return_form.html', {'customers': customers, 'batches': batches, 'error': str(e)})
+            import traceback
+            print(f"ERROR creating return: {e}")
+            print(f"TRACEBACK: {traceback.format_exc()}")
+            messages.error(request, f"Error creating return: {str(e)}")
+            return redirect('returns_list')
+            
+    return render(request, 'transactions/sales_return_form.html')
+
+def sales_return_detail(request, pk):
+    sales_return = get_object_or_404(SalesReturn, pk=pk)
+    return render(request, 'transactions/sales_return_detail.html', {
+        'return': sales_return
+    })
+
+@require_POST
+def delete_sales_return(request, pk):
+    sales_return = get_object_or_404(SalesReturn, pk=pk)
+    try:
+        with transaction.atomic():
+            # 1. Reverse Inventory Impact (Stock Deduction)
+            # When return was created: Stock += Qty
+            # Now deleting return: Stock -= Qty
+            for item in sales_return.items.all():
+                batch = item.batch
+                # Ensure we don't go negative if stock was already consumed (Edge case)
+                # But physically, if we undo a return, the stock should leave.
+                batch.current_quantity -= item.quantity
+                batch.save()
+            
+            # 2. Reverse Financial Impact (Wallet Debit)
+            # When return was created: Wallet += Amount (Credit)
+            # Now deleting return: Deleting the payment entry will trigger the signal to reverse it.
+            # Signal: post_delete on CustomerPayment -> if WALLET_CREDIT -> Wallet -= Amount.
+            if hasattr(sales_return, 'payment_entry') and sales_return.payment_entry:
+                sales_return.payment_entry.delete()
+                
+            # 3. Delete the Return Record
+            sales_return.delete()
+            
+            messages.success(request, "Sales return deleted successfully. Stock deducted and wallet reversed.")
+            return redirect('returns_list')
+            
+    except Exception as e:
+        print(f"Error deleting return: {e}")
+        messages.error(request, f"Error deleting return: {str(e)}")
+        return redirect('sales_return_detail', pk=pk)
 
     # GET
     customers = Customer.objects.all()
@@ -1435,9 +1513,17 @@ def record_receipt(request, pk):
 @csrf_exempt
 @require_POST
 def delete_customer_payment(request, pk):
+    from django.db.models import ProtectedError
+    
     payment = get_object_or_404(CustomerPayment, pk=pk)
     invoice_pk = payment.invoice.pk
-    payment.delete()
+    
+    try:
+        payment.delete()
+        messages.success(request, "Payment deleted successfully.")
+    except ProtectedError:
+        messages.error(request, "Cannot delete this payment because it has been reversed. Please delete the Reversal entry first.")
+        
     return redirect('invoice_detail', pk=invoice_pk)
 
 def customer_ledger(request):
@@ -1586,7 +1672,10 @@ def customer_statement_view(request, pk):
     
     # 2. Payments (Credit - Customer debt reduces, EXCEPT for WALLET mode)
     # Sprint 54 Fix: Include ALL payments for this customer (via invoice)
-    for pmt in CustomerPayment.objects.filter(invoice__customer=customer).select_related('invoice').order_by('created_at'):
+    # Sprint 57 Fix: Include payments via Invoice AND Sales Returns (Wallet Credit)
+    for pmt in CustomerPayment.objects.filter(
+        Q(invoice__customer=customer) | Q(sales_return__customer=customer)
+    ).select_related('invoice', 'sales_return').order_by('created_at'):
         is_reversal = pmt.amount < 0 or pmt.reversal_of is not None
         pmt_mode = pmt.payment_mode
         pmt_mode_display = pmt.get_payment_mode_display()
@@ -1597,10 +1686,19 @@ def customer_statement_view(request, pk):
         
         if is_reversal:
             particulars = f"Reversal ({pmt_mode_display})"
+        elif hasattr(pmt, 'sales_return') and pmt.sales_return:
+             particulars = f"Sales Return #{pmt.sales_return.pk}"
         elif is_wallet_allocation:
-            particulars = f"Wallet → Invoice #{pmt.invoice.invoice_number}"
+           if pmt.notes and "Auto-credit" in pmt.notes:
+             particulars = pmt.notes
+           else:
+             particulars = f"Wallet → Invoice #{pmt.invoice.invoice_number}"
+        elif pmt.payment_mode == 'SALES_RETURN' and pmt.invoice:
+             particulars = f"Return Adjustment (Inv #{pmt.invoice.invoice_number})"
+        elif pmt.invoice:
+             particulars = f"Payment ({pmt_mode_display}) - #{pmt.invoice.invoice_number}"
         else:
-            particulars = f"Payment ({pmt_mode_display}) - #{pmt.invoice.invoice_number}"
+             particulars = f"Payment ({pmt_mode_display}) - General"
         
         # Determine debit/credit:
         # - Reversals = debit (debt increases back)
@@ -1617,6 +1715,7 @@ def customer_statement_view(request, pk):
             'is_debit': is_reversal,
             'is_reversal': is_reversal,
             'is_wallet_allocation': is_wallet_allocation,
+            'is_sales_return': bool(hasattr(pmt, 'sales_return') and pmt.sales_return),
             'payment_id': pmt.id,
             'can_reverse': not is_reversal and not hasattr(pmt, 'reversal_entry'),
             'payment_mode': pmt_mode
@@ -1691,6 +1790,11 @@ def reverse_wallet_transaction(request, payment_id):
     # If original already has a reversal_entry, it has been reversed before
     if hasattr(original, 'reversal_entry'):
         return JsonResponse({'success': False, 'error': 'Transaction already reversed.'}, status=400)
+
+    # Sprint 60: Statement Integrity Lock
+    # Prevent users from voiding a Return Credit directly. They must delete the Sales Return record.
+    if hasattr(original, 'sales_return') and original.sales_return:
+        return JsonResponse({'success': False, 'error': 'Cannot reverse a Return Credit directly. Please delete the Sales Return record.'}, status=400)
 
     # Also check if this payment IS a reversal itself (can't reverse a reversal)
     if original.reversal_of is not None:
