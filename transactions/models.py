@@ -71,15 +71,25 @@ class SupplierPayment(models.Model):
         ('UPI', 'UPI'),
         ('CHEQUE', 'Cheque'),
         ('BANK', 'Bank Transfer'),
+        ('DEBIT_NOTE', 'Debit Note'),
     ]
     
-    invoice = models.ForeignKey(PurchaseInvoice, related_name='payments', on_delete=models.CASCADE)
+    invoice = models.ForeignKey(PurchaseInvoice, related_name='payments', on_delete=models.CASCADE, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
     payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES, default='CASH')
     reference_id = models.CharField(max_length=50, blank=True, null=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    # Sprint 61: Link PurchaseReturn for Debit Note
+    purchase_return = models.OneToOneField(
+        'PurchaseReturn',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='payment_entry'
+    )
     
     def __str__(self):
         return f"Payment {self.amount} for {self.invoice.invoice_number}"

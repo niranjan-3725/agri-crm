@@ -163,6 +163,7 @@ def get_batches_for_product(request):
         'batch_number': b.batch_number,
         'quantity': b.current_quantity,
         'price': float(b.base_selling_price) if b.base_selling_price else 0,
+        'cost': float(b.purchase_price) if b.purchase_price else 0,
         'manufacturing_date': b.manufacturing_date,
         'expiry_date': b.expiry_date
     } for b in batches]
@@ -1381,7 +1382,11 @@ def create_purchase_return(request):
                     # Validation: Cannot return more than we have
                     if qty > batch.current_quantity:
                         raise ValidationError(f"Cannot return {qty} of {batch}. Only {batch.current_quantity} in stock.")
-                        
+                    
+                    # FIX: Deduct Stock
+                    batch.current_quantity -= qty
+                    batch.save()
+                    
                     PurchaseReturnItem.objects.create(
                         return_invoice=purchase_return,
                         batch=batch,
@@ -1393,6 +1398,20 @@ def create_purchase_return(request):
                 
                 purchase_return.total_refund_amount = grand_total
                 purchase_return.save()
+                
+                # FIX: Create Debit Note (SupplierPayment)
+                if grand_total > 0:
+                    SupplierPayment.objects.create(
+                        invoice=purchase_return.original_invoice, # Can be None now
+                        amount=grand_total,
+                        payment_mode='DEBIT_NOTE', # Technically 'DEBIT_NOTE' is not in CHOICES yet?
+                        # User Prompt: payment_mode: 'DEBIT_NOTE'
+                        # I should check logic or CHOICES.
+                        # SupplierPayment.PAYMENT_MODE_CHOICES doesn't have DEBIT_NOTE.
+                        # I should add it to CHOICES in models.py as well.
+                        purchase_return=purchase_return,
+                        notes=f"Auto-debit for Return #{purchase_return.pk}"
+                    )
                 
                 return redirect('returns_list')
 
@@ -1409,6 +1428,40 @@ def create_purchase_return(request):
     suppliers = Supplier.objects.all()
     batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
     return render(request, 'transactions/purchase_return_form.html', {'suppliers': suppliers, 'batches': batches})
+
+def purchase_return_detail(request, pk):
+    purchase_return = get_object_or_404(PurchaseReturn, pk=pk)
+    return render(request, 'transactions/purchase_return_detail.html', {
+        'return': purchase_return
+    })
+
+@require_POST
+def delete_purchase_return(request, pk):
+    purchase_return = get_object_or_404(PurchaseReturn, pk=pk)
+    
+    try:
+        with transaction.atomic():
+            # 1. Reverse Inventory (Stock Restoration)
+            # When created: Stock decreased.
+            # Now deleting: Stock must increase.
+            for item in purchase_return.items.all():
+                batch = item.batch
+                batch.current_quantity += item.quantity
+                batch.save()
+            
+            # 2. Reverse Finance (Delete Debit Note)
+            if hasattr(purchase_return, 'payment_entry') and purchase_return.payment_entry:
+                purchase_return.payment_entry.delete()
+                
+            # 3. Delete Record
+            purchase_return.delete()
+            
+            messages.success(request, "Supplier return deleted. Stock restored and debit note removed.")
+            return redirect('returns_list')
+            
+    except Exception as e:
+        messages.error(request, f"Error deleting return: {str(e)}")
+        return redirect('purchase_return_detail', pk=pk)
 
 @require_POST
 def create_supplier(request):
