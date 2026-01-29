@@ -1,218 +1,224 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="purchaseReturnForm()">
+<div x-data="purchaseReturnLogic()" class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]">
 
-    <div class="md:flex md:items-center md:justify-between mb-8">
-        <div class="min-w-0 flex-1">
-            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">Purchase
-                Return (Outward)</h2>
-        </div>
-    </div>
+    <!-- LEFT: Main Form Area -->
+    <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32">
+        <div class="max-w-5xl mx-auto space-y-8">
 
-    {% if error %}
-    <div class="rounded-md bg-red-50 p-4 mb-6 border border-red-200">
-        <div class="flex">
-            <div class="flex-shrink-0">
-                <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fill-rule="evenodd"
-                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
-                        clip-rule="evenodd" />
-                </svg>
-            </div>
-            <div class="ml-3">
-                <h3 class="text-sm font-medium text-red-800">Error</h3>
-                <div class="mt-2 text-sm text-red-700">
-                    <p>{{ error }}</p>
+            <!-- Header -->
+            <header class="flex flex-col gap-2">
+                <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+                    <span class="bg-red-50 text-red-600 px-2 py-1 rounded">Purchase</span>
+                    <span>•</span>
+                    <span>Return (Outward)</span>
                 </div>
+                <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">Purchase Return</h1>
+                <p class="text-gray-500">Process return of goods to suppliers</p>
+            </header>
+
+            {% if error %}
+            <div class="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-2xl" role="alert">
+                <strong class="font-bold">Error!</strong>
+                <span class="block sm:inline">{{ error }}</span>
             </div>
-        </div>
-    </div>
-    {% endif %}
+            {% endif %}
 
-    <form method="POST" action="{% url 'create_purchase_return' %}">
-        {% csrf_token %}
+            <form method="POST" action="{% url 'create_purchase_return' %}">
+                {% csrf_token %}
 
-        <!-- Header Card -->
-        <div class="bg-white shadow-sm rounded-lg border border-gray-200 p-6 mb-8">
-            <div class="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
-                <!-- Supplier -->
-                <div class="sm:col-span-2">
-                    <label for="supplier" class="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-                    <div class="mt-1">
-                        <select name="supplier" id="supplier" required
-                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
+                <!-- Master Fields Card -->
+                <div
+                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+                    <!-- Supplier Select -->
+                    <div>
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Supplier</label>
+                        <select name="supplier" required
+                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all">
                             <option value="">-- Select Supplier --</option>
                             {% for supplier in suppliers %}
                             <option value="{{ supplier.id }}">{{ supplier.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
-                </div>
 
-                <!-- Date -->
-                <div class="sm:col-span-2">
-                    <label for="date" class="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                    <div class="mt-1">
-                        <input type="date" name="date" id="date" value="{% now 'Y-m-d' %}" required
-                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
+                    <!-- Date -->
+                    <div>
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Date</label>
+                        <input type="date" name="date" value="{% now 'Y-m-d' %}" required
+                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all">
+                    </div>
+
+                    <!-- Reason -->
+                    <div>
+                        <label
+                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Reason</label>
+                        <input type="text" name="reason" placeholder="e.g. Damaged Goods" required
+                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
                     </div>
                 </div>
 
-                <!-- Reason -->
-                <div class="sm:col-span-2">
-                    <label for="reason" class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
-                    <div class="mt-1">
-                        <input type="text" name="reason" id="reason" placeholder="e.g. Damaged Goods" required
-                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
-                    </div>
-                </div>
-            </div>
-        </div>
+                <!-- Items Section (Card-Based) -->
+                <div class="space-y-4">
+                    <template x-for="(row, i) in rows" :key="row.id">
+                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative">
+                            <!-- Remove Button -->
+                            <button type="button" @click="removeRow(i)"
+                                class="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-10">
+                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                    </path>
+                                </svg>
+                            </button>
 
-        <!-- Items Card -->
-        <div class="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden mb-8">
-            <div class="min-w-full inline-block align-middle">
-                <div class="border-b border-gray-200 bg-gray-50 px-6 py-4 flex justify-between items-center">
-                    <h3 class="text-lg font-medium leading-6 text-gray-900">Return Items</h3>
-                    <button type="button" @click="addRow()"
-                        class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
-                        <svg class="-ml-1 mr-2 h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd"
-                                d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
-                                clip-rule="evenodd" />
-                        </svg>
-                        Add Item
-                    </button>
-                </div>
+                            <!-- Hidden Inputs -->
+                            <input type="hidden" name="batch_id[]" :value="row.batchId">
 
-                <table class="min-w-full divide-y divide-gray-300">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider pl-6">
-                                Product</th>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Batch</th>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Stock</th>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Return Qty</th>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Refund Rate</th>
-                            <th scope="col"
-                                class="px-3 py-3.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Total</th>
-                            <th scope="col" class="relative py-3.5 pl-3 pr-4 sm:pr-6"><span
-                                    class="sr-only">Actions</span></th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-200 bg-white">
-                        <template x-for="(row, index) in rows" :key="row.id">
-                            <tr>
-                                <!-- Product Search -->
-                                <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
-                                    <div class="relative rounded-md shadow-sm">
-                                        <div
-                                            class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                            <svg class="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fill-rule="evenodd"
-                                                    d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
-                                                    clip-rule="evenodd" />
-                                            </svg>
-                                        </div>
-                                        <input type="text" x-model="row.productSearch"
-                                            @input.debounce.500ms="searchProducts(row)" list="product-list-global"
-                                            placeholder="Search product..."
-                                            class="block w-full rounded-md border-gray-300 pl-10 focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
-                                        <input type="hidden" x-model="row.productId">
+                            <!-- Row 1: Product Search -->
+                            <div class="mb-4 relative">
+                                <div class="flex justify-between items-end mb-2">
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 block">Product
+                                        to Return</label>
+                                    <div class="flex gap-4 text-xs font-bold pr-10" x-show="row.stockDisplay">
+                                        <span class="text-gray-400">Stock: <span
+                                                :class="{'text-red-600': row.stockError, 'text-gray-900': !row.stockError}"
+                                                x-text="row.stockDisplay || '-'"></span></span>
                                     </div>
-                                </td>
+                                </div>
+                                <div class="relative group">
+                                    <input type="text" x-model="row.productSearch"
+                                        @input.debounce.300ms="searchProducts(row)" list="product-list-global"
+                                        placeholder="Search Product..."
+                                        class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+                                    <input type="hidden" :value="row.productId">
+                                </div>
+                            </div>
 
-                                <!-- Batch Select -->
-                                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                            <!-- Row 2: Info Grid -->
+                            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                <!-- Batch -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Batch</label>
                                     <select name="batch_id[]" x-model="row.batchId" @change="updateBatchDetails(row)"
                                         :disabled="!row.productId"
-                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all disabled:bg-gray-100 disabled:text-gray-400">
                                         <option value="">Select Batch</option>
                                         <template x-for="batch in row.availableBatches" :key="batch.id">
                                             <option :value="batch.id" x-text="batch.batch_number"></option>
                                         </template>
                                     </select>
-                                </td>
+                                </div>
 
-                                <!-- Stock -->
-                                <td class="whitespace-nowrap px-3 py-4 text-sm font-medium">
-                                    <span :class="{'text-red-600': row.stockError, 'text-gray-900': !row.stockError}"
-                                        x-text="row.stockDisplay || '-'"></span>
-                                </td>
+                                <!-- Size (Read-only, auto-populated) -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Size</label>
+                                    <input type="text" x-model="row.size" readonly
+                                        class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
+                                </div>
 
-                                <!-- Qty -->
-                                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                                <!-- Unit (Read-only, auto-populated) -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Unit</label>
+                                    <input type="text" x-model="row.unit" readonly
+                                        class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
+                                </div>
+
+                                <!-- Quantity -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
+                                        Qty</label>
                                     <input type="number" name="qty[]" x-model.number="row.qty"
-                                        @input="calculateRow(row)" required min="1"
-                                        class="block w-24 rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
-                                </td>
+                                        @input="calculateRow(row)" min="1" :disabled="!row.batchId"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-bold text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                </div>
 
-                                <!-- Price -->
-                                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
-                                    <div class="relative">
-                                        <div
-                                            class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                            <span class="text-gray-500 sm:text-sm">₹</span>
-                                        </div>
-                                        <input type="number" step="0.01" name="price[]" x-model.number="row.price"
-                                            @input="calculateRow(row)"
-                                            class="block w-32 rounded-md border-gray-300 pl-7 focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm">
-                                    </div>
-                                    <p class="mt-1 text-xs text-gray-500" x-show="row.costHelper"
-                                        x-text="'Cost: ₹' + row.costHelper"></p>
-                                </td>
+                                <!-- Refund Rate -->
+                                <div>
+                                    <label
+                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Rate</label>
+                                    <input type="number" step="0.01" name="price[]" x-model.number="row.price"
+                                        @input="calculateRow(row)" :disabled="!row.batchId"
+                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                </div>
+                            </div>
 
-                                <!-- Total -->
-                                <td class="whitespace-nowrap px-3 py-4 text-sm font-bold text-gray-900">
-                                    ₹<span x-text="row.total.toFixed(2)"></span>
-                                </td>
+                            <!-- Row Total -->
+                            <div class="mt-4 pt-4 border-t border-gray-50 flex justify-end">
+                                <div class="text-right">
+                                    <span class="text-xs text-gray-400 uppercase">Item Total</span>
+                                    <div class="text-lg font-bold text-gray-900">&#8377;<span
+                                            x-text="row.total.toFixed(2)"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
 
-                                <!-- Delete -->
-                                <td class="whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-                                    <button type="button" @click="removeRow(index)"
-                                        class="text-red-600 hover:text-red-900 transition-colors rounded-full p-2 hover:bg-red-50">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20"
-                                            fill="currentColor">
-                                            <path fill-rule="evenodd"
-                                                d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                                                clip-rule="evenodd" />
-                                        </svg>
-                                    </button>
-                                </td>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
+                    <!-- Add Item Button -->
+                    <button type="button" @click="addRow()"
+                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50/50 transition-all font-bold flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path d="M12 4v16m8-8H4"></path>
+                        </svg>
+                        Add Another Item
+                    </button>
+                </div>
+
+                <!-- Hidden submit -->
+                <button type="submit" id="main-submit-btn" class="hidden">Submit</button>
+            </form>
+
+        </div>
+    </main>
+
+    <!-- RIGHT: Sticky Summary Sidebar -->
+    <aside class="xl:w-[420px] bg-white border-l border-gray-100 z-40 relative">
+        <div class="xl:fixed xl:w-[420px] h-full flex flex-col">
+
+            <div class="p-8 pb-4 border-b border-gray-50 hidden xl:block">
+                <h2 class="text-lg font-bold text-gray-900">Refund Summary</h2>
+                <p class="text-sm text-gray-400 mt-1">Review before processing</p>
             </div>
-            <!-- Footer Totals -->
-            <div class="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-end items-center">
-                <div class="text-right">
-                    <p class="text-sm text-gray-500">Total Refund Amount</p>
-                    <p class="text-2xl font-bold text-gray-900">₹<span x-text="grandTotal()"></span></p>
+
+            <div class="flex-1 p-8 space-y-6 overflow-y-auto">
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center py-3 border-b border-gray-50">
+                        <span class="text-gray-500">Total Items</span>
+                        <span class="font-bold text-gray-900" x-text="rows.length"></span>
+                    </div>
+                </div>
+
+                <div class="bg-red-50 rounded-2xl p-6 border border-red-100">
+                    <div class="text-xs font-bold uppercase tracking-widest text-red-600 mb-2">Total Refund</div>
+                    <div class="text-4xl font-bold text-gray-900">&#8377;<span x-text="grandTotal()"></span></div>
                 </div>
             </div>
-        </div>
 
-        <div class="flex justify-end gap-x-4">
-            <a href="{% url 'returns_list' %}"
-                class="rounded-md border border-gray-300 bg-white py-2 px-6 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">Cancel</a>
-            <button type="submit"
-                class="inline-flex justify-center rounded-md border border-transparent bg-red-600 py-2 px-6 text-sm font-bold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">Process
-                Return</button>
-        </div>
+            <div class="p-8 pt-4 border-t border-gray-50">
+                <button type="button" @click="document.getElementById('main-submit-btn').click()"
+                    :disabled="grandTotal() <= 0"
+                    class="w-full py-5 rounded-2xl font-bold text-lg text-white bg-gradient-to-r from-red-500 to-red-600 shadow-xl shadow-red-500/20 hover:shadow-red-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Process Return
+                </button>
+            </div>
 
-    </form>
+        </div>
+    </aside>
 
     <!-- Alpine Script & Datalist -->
     <datalist id="product-list-global">
@@ -220,40 +226,106 @@
             <option :value="p.name"></option>
         </template>
     </datalist>
+
 </div>
 
 <script>
-    function purchaseReturnForm() {
+    function purchaseReturnLogic() {
         return {
-            rows: [{ id: Date.now(), productSearch: '', productId: '', batchId: '', availableBatches: [], qty: 1, price: 0, total: 0, stockDisplay: '', stockError: false, costHelper: '' }],
+            rows: [],
             searchResults: [],
-            addRow() {
-                this.rows.push({ id: Date.now(), productSearch: '', productId: '', batchId: '', availableBatches: [], qty: 1, price: 0, total: 0, stockDisplay: '', stockError: false, costHelper: '' });
+
+            init() {
+                this.addRow();
             },
-            removeRow(index) { this.rows.splice(index, 1); },
+
+            addRow() {
+                this.rows.push({
+                    id: Date.now(),
+                    productSearch: '',
+                    productId: '',
+                    batchId: '',
+                    availableBatches: [],
+                    qty: 1,
+                    price: 0,
+                    total: 0,
+                    stockDisplay: '',
+                    stockError: false,
+                    size: '',
+                    unit: ''
+                });
+            },
+
+            removeRow(index) {
+                if (this.rows.length > 1) this.rows.splice(index, 1);
+            },
+
             async searchProducts(row) {
                 if (row.productSearch.length < 2) return;
-                const response = await fetch(`{% url 'search_products' %}?format=json&q=${row.productSearch}`);
-                const products = await response.json();
-                this.searchResults = products;
-                const match = products.find(p => p.name.toLowerCase() === row.productSearch.toLowerCase());
-                if (match) { row.productId = match.id; this.fetchBatches(row); } else { row.productId = ''; row.availableBatches = []; }
+                try {
+                    const response = await fetch(`{% url 'search_products' %}?format=json&q=${row.productSearch}`);
+                    const products = await response.json();
+                    this.searchResults = products;
+
+                    // Auto-select if exact match
+                    const match = products.find(p => p.name.toLowerCase() === row.productSearch.toLowerCase());
+                    if (match) {
+                        row.productId = match.id;
+                        this.fetchBatches(row);
+                    } else {
+                        row.productId = '';
+                        row.availableBatches = [];
+                    }
+                } catch (e) {
+                    console.error("Search failed", e);
+                }
             },
+
             async fetchBatches(row) {
                 if (!row.productId) return;
-                const response = await fetch(`{% url 'get_batches_for_product' %}?product_id=${row.productId}`);
-                const batches = await response.json();
-                row.availableBatches = batches; row.batchId = ''; row.stockDisplay = ''; row.price = 0;
+                try {
+                    const response = await fetch(`{% url 'get_batches_for_product' %}?product_id=${row.productId}`);
+                    const batches = await response.json();
+                    row.availableBatches = batches;
+                    row.batchId = '';
+                    row.stockDisplay = '';
+                    row.price = 0;
+                    row.size = '';
+                    row.unit = '';
+                } catch (e) {
+                    console.error("Batch fetch failed", e);
+                }
             },
+
             updateBatchDetails(row) {
                 const batch = row.availableBatches.find(b => b.id == row.batchId);
-                if (batch) { row.stockDisplay = batch.quantity; row.price = batch.cost; row.costHelper = batch.cost; this.calculateRow(row); } else { row.stockDisplay = ''; row.price = 0; row.costHelper = ''; }
+                if (batch) {
+                    row.stockDisplay = batch.quantity;
+                    row.price = parseFloat(batch.cost) || 0;
+                    row.size = batch.size || '';
+                    row.unit = batch.unit || '';
+                    this.calculateRow(row);
+                } else {
+                    row.stockDisplay = '';
+                    row.price = 0;
+                    row.size = '';
+                    row.unit = '';
+                }
             },
+
             calculateRow(row) {
-                row.stockError = row.stockDisplay !== '' && row.qty > row.stockDisplay;
-                row.total = row.qty * row.price;
+                // Stock Validation
+                if (row.stockDisplay !== '') {
+                    const stock = parseFloat(row.stockDisplay);
+                    row.stockError = row.qty > stock;
+                }
+
+                row.total = (row.qty || 0) * (row.price || 0);
             },
-            grandTotal() { return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2); }
+
+            grandTotal() {
+                return this.rows.reduce((sum, row) => sum + (row.total || 0), 0).toFixed(2);
+            }
         }
     }
 </script>
