@@ -2,6 +2,34 @@
 {% load humanize %}
 
 {% block content %}
+<style>
+    .form-input {
+        border: 1.5px solid #cbd5e1 !important;
+        background-color: #f8fafc !important;
+        transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-input:hover {
+        border-color: #94a3b8 !important;
+    }
+
+    .form-input:focus {
+        border-color: #ef4444 !important;
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1) !important;
+        background-color: #fff !important;
+    }
+
+    .form-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #f1f5f9 !important;
+        border-color: #e2e8f0 !important;
+    }
+
+    .form-input::placeholder {
+        color: #94a3b8;
+    }
+</style>
 <div x-data="purchaseReturnLogic()" class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]">
 
     <!-- LEFT: Main Form Area -->
@@ -19,54 +47,154 @@
                 <p class="text-gray-500">Process return of goods to suppliers</p>
             </header>
 
-            {% if error %}
-            <div class="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-2xl" role="alert">
-                <strong class="font-bold">Error!</strong>
-                <span class="block sm:inline">{{ error }}</span>
+            {% if messages %}
+            {% for message in messages %}
+            <div class="bg-{{ message.tags|default:'blue' }}-50 border border-{{ message.tags|default:'blue' }}-200 text-{{ message.tags|default:'blue' }}-700 px-6 py-4 rounded-2xl"
+                role="alert">
+                <span class="block sm:inline">{{ message }}</span>
             </div>
+            {% endfor %}
             {% endif %}
 
             <form method="POST" action="{% url 'create_purchase_return' %}">
                 {% csrf_token %}
 
                 <!-- Master Fields Card -->
-                <div
-                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 space-y-8">
 
-                    <!-- Supplier Select -->
-                    <div>
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Supplier</label>
-                        <select name="supplier" required
-                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all">
-                            <option value="">-- Select Supplier --</option>
-                            {% for supplier in suppliers %}
-                            <option value="{{ supplier.id }}">{{ supplier.name }}</option>
-                            {% endfor %}
-                        </select>
+                    <!-- Row 1: Supplier + Invoice (wider fields) -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+                        <!-- Searchable Supplier -->
+                        <div class="relative">
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Supplier</label>
+                            <div class="relative group" @click.away="supplierOpen = false">
+                                <input type="hidden" name="supplier" x-model="supplierId">
+                                <input type="text" x-model="supplierSearch" @input.debounce.300ms="searchSuppliers()"
+                                    @focus="supplierOpen = true" placeholder="Search by Name or Phone..."
+                                    class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+
+                                <!-- Dropdown -->
+                                <div x-show="supplierOpen && supplierResults.length > 0"
+                                    class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                    style="display: none;">
+                                    <template x-for="s in supplierResults" :key="s.id">
+                                        <div @click="selectSupplier(s)"
+                                            class="px-5 py-3 hover:bg-red-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                            <div class="font-bold text-gray-900" x-text="s.name"></div>
+                                            <div class="text-xs text-gray-500">
+                                                <span x-text="s.phone || 'No Phone'"></span> • <span
+                                                    x-text="s.gstin || 'No GSTIN'"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Searchable Invoice (Optional) -->
+                        <div class="relative">
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Original
+                                Invoice <span class="text-gray-300 normal-case">(Optional)</span></label>
+                            <div class="relative group" @click.away="invoiceOpen = false">
+                                <input type="hidden" name="original_invoice" x-model="invoiceId">
+                                <input type="text" x-model="invoiceSearch" @focus="openInvoiceDropdown()"
+                                    @input.debounce.300ms="searchInvoices()" :disabled="!supplierId"
+                                    placeholder="Select Invoice..."
+                                    class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+
+                                <!-- Dropdown -->
+                                <div x-show="invoiceOpen && availableInvoices.length > 0"
+                                    class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                    style="display: none;">
+                                    <template x-for="inv in filteredInvoicesList" :key="inv.id">
+                                        <div @click="selectInvoice(inv)"
+                                            class="px-5 py-3 hover:bg-red-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                            <div class="font-bold text-gray-900" x-text="'#' + inv.invoice_number">
+                                            </div>
+                                            <div class="text-xs text-gray-500 flex justify-between">
+                                                <span x-text="inv.date"></span>
+                                                <span class="font-bold text-red-600"
+                                                    x-text="'₹' + inv.total_amount.toFixed(2)"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <!-- No Results -->
+                                    <div x-show="filteredInvoicesList.length === 0"
+                                        class="p-4 text-center text-gray-400 text-sm">
+                                        No invoices found.
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Skip Invoice Link -->
+                            <button type="button" @click="skipInvoice()" x-show="supplierId && !invoiceId"
+                                class="text-[10px] text-red-500 font-bold mt-1.5 pl-1 hover:text-red-700 transition-colors cursor-pointer"
+                                style="display: none;">
+                                ↳ Skip — Return without invoice
+                            </button>
+                            <!-- Clear Invoice Link -->
+                            <button type="button" @click="clearInvoice()" x-show="invoiceId || freeformMode"
+                                class="text-[10px] text-gray-400 font-bold mt-1.5 pl-1 hover:text-red-500 transition-colors cursor-pointer"
+                                style="display: none;">
+                                ✕ Clear selection
+                            </button>
+                        </div>
                     </div>
 
-                    <!-- Date -->
-                    <div>
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Date</label>
-                        <input type="date" name="date" value="{% now 'Y-m-d' %}" required
-                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all">
-                    </div>
+                    <!-- Row 2: Date + Reason (compact fields) -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                    <!-- Reason -->
-                    <div>
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Reason</label>
-                        <input type="text" name="reason" placeholder="e.g. Damaged Goods" required
-                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+                        <!-- Return Date -->
+                        <div>
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
+                                Date</label>
+                            <input type="date" name="date" value="{% now 'Y-m-d' %}" required
+                                class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+                        </div>
+
+                        <!-- Reason -->
+                        <div>
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Reason</label>
+                            <input type="text" name="reason" placeholder="e.g. Damaged Goods" required
+                                class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+                        </div>
                     </div>
                 </div>
 
-                <!-- Items Section (Card-Based) -->
+                <!-- Mode Indicator -->
+                <div x-show="supplierId && (invoiceId || freeformMode)"
+                    class="mb-4 flex items-center gap-2 text-xs font-bold uppercase tracking-widest pl-2"
+                    style="display: none;">
+                    <template x-if="invoiceId">
+                        <span class="flex items-center gap-1.5 text-red-600 bg-red-50 px-3 py-1.5 rounded-full">
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Invoice-Linked Return
+                        </span>
+                    </template>
+                    <template x-if="freeformMode && !invoiceId">
+                        <span class="flex items-center gap-1.5 text-amber-600 bg-amber-50 px-3 py-1.5 rounded-full">
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M12 8v8m-4-4h8"></path>
+                            </svg>
+                            Freeform Return (no invoice)
+                        </span>
+                    </template>
+                </div>
+
+                <!-- Items Section -->
                 <div class="space-y-4">
                     <template x-for="(row, i) in rows" :key="row.id">
-                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative">
+                        <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm relative"
+                            :class="{'opacity-50 pointer-events-none': !invoiceId && !freeformMode}">
                             <!-- Remove Button -->
                             <button type="button" @click="removeRow(i)"
                                 class="absolute top-4 right-4 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors z-10">
@@ -82,26 +210,83 @@
                             <!-- Hidden Inputs -->
                             <input type="hidden" name="batch_id[]" :value="row.batchId">
 
-                            <!-- Row 1: Product Search -->
-                            <div class="mb-4 relative">
-                                <div class="flex justify-between items-end mb-2">
-                                    <label
-                                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 block">Product
-                                        to Return</label>
-                                    <div class="flex gap-4 text-xs font-bold pr-10" x-show="row.stockDisplay">
-                                        <span class="text-gray-400">Stock: <span
-                                                :class="{'text-red-600': row.stockError, 'text-gray-900': !row.stockError}"
-                                                x-text="row.stockDisplay || '-'"></span></span>
+                            <!-- INVOICE-LINKED MODE: Item Selection (Custom Dropdown) -->
+                            <template x-if="invoiceId">
+                                <div class="mb-4 relative" @click.away="row.itemOpen = false">
+                                    <div class="flex justify-between items-end mb-2">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 block">Item
+                                            to Return</label>
+                                        <div class="flex gap-4 text-xs font-bold pr-10" x-show="row.batchId">
+                                            <span class="text-gray-400">Mfg: <span class="text-gray-900"
+                                                    x-text="row.mfgDate || '-'"></span></span>
+                                            <span class="text-gray-400">Exp: <span class="text-red-600"
+                                                    x-text="row.expDate || '-'"></span></span>
+                                        </div>
+                                    </div>
+                                    <div class="relative group">
+                                        <input type="text" x-model="row.productName"
+                                            @click="row.itemOpen = !row.itemOpen" placeholder="Select Item..." readonly
+                                            class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none cursor-pointer">
+
+                                        <!-- Dropdown -->
+                                        <div x-show="row.itemOpen && getFilteredItems(row).length > 0"
+                                            class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                            style="display: none;">
+                                            <template x-for="item in getFilteredItems(row)" :key="item.id">
+                                                <div @click="selectInvoiceItem(row, item)"
+                                                    class="px-5 py-3 hover:bg-red-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                                    <div class="font-bold text-gray-900" x-text="item.product_name">
+                                                    </div>
+                                                    <div class="text-xs text-gray-500 mt-0.5 space-x-2">
+                                                        <span class="bg-gray-100 px-1.5 rounded text-gray-600 font-mono"
+                                                            x-text="item.batch_number"></span>
+                                                        <span>•</span>
+                                                        <span x-text="item.size + ' ' + item.unit"></span>
+                                                        <span>•</span>
+                                                        <span>Bought: <span class="font-bold text-gray-900"
+                                                                x-text="item.qty_purchased"></span></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="relative group">
-                                    <input type="text" x-model="row.productSearch"
-                                        @input.debounce.300ms="searchProducts(row)" list="product-list-global"
-                                        placeholder="Search Product..."
-                                        class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
-                                    <input type="hidden" :value="row.productId">
+                            </template>
+
+                            <!-- FREEFORM MODE: Product Search -->
+                            <template x-if="freeformMode && !invoiceId">
+                                <div class="mb-4 relative" @click.away="row.productOpen = false">
+                                    <div class="flex justify-between items-end mb-2">
+                                        <label
+                                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 block">Product
+                                            to Return</label>
+                                        <div class="flex gap-4 text-xs font-bold pr-10" x-show="row.stockDisplay">
+                                            <span class="text-gray-400">Stock: <span
+                                                    :class="{'text-red-600': row.stockError, 'text-gray-900': !row.stockError}"
+                                                    x-text="row.stockDisplay || '-'"></span></span>
+                                        </div>
+                                    </div>
+                                    <div class="relative group">
+                                        <input type="text" x-model="row.productSearch"
+                                            @input.debounce.300ms="searchProducts(row)" @focus="row.productOpen = true"
+                                            placeholder="Search Product..."
+                                            class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+
+                                        <!-- Product Dropdown -->
+                                        <div x-show="row.productOpen && row.productResults.length > 0"
+                                            class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                            style="display: none;">
+                                            <template x-for="p in row.productResults" :key="p.id">
+                                                <div @click="selectProduct(row, p)"
+                                                    class="px-5 py-3 hover:bg-red-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                                    <div class="font-bold text-gray-900" x-text="p.name"></div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            </template>
 
                             <!-- Row 2: Info Grid -->
                             <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -109,17 +294,25 @@
                                 <div>
                                     <label
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Batch</label>
-                                    <select name="batch_id[]" x-model="row.batchId" @change="updateBatchDetails(row)"
-                                        :disabled="!row.productId"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all disabled:bg-gray-100 disabled:text-gray-400">
-                                        <option value="">Select Batch</option>
-                                        <template x-for="batch in row.availableBatches" :key="batch.id">
-                                            <option :value="batch.id" x-text="batch.batch_number"></option>
-                                        </template>
-                                    </select>
+                                    <!-- Invoice-linked: read-only batch -->
+                                    <template x-if="invoiceId">
+                                        <input type="text" x-model="row.batchNumber" readonly
+                                            class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
+                                    </template>
+                                    <!-- Freeform: batch dropdown -->
+                                    <template x-if="!invoiceId && freeformMode">
+                                        <select x-model="row.batchId" @change="updateBatchDetails(row)"
+                                            :disabled="!row.productId"
+                                            class="form-input w-full h-12 rounded-xl px-4 font-medium text-gray-900 outline-none">
+                                            <option value="">Select Batch</option>
+                                            <template x-for="batch in row.availableBatches" :key="batch.id">
+                                                <option :value="batch.id" x-text="batch.batch_number"></option>
+                                            </template>
+                                        </select>
+                                    </template>
                                 </div>
 
-                                <!-- Size (Read-only, auto-populated) -->
+                                <!-- Size -->
                                 <div>
                                     <label
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Size</label>
@@ -127,7 +320,7 @@
                                         class="w-full h-12 bg-gray-100 text-gray-500 rounded-xl px-4 font-medium border border-transparent outline-none cursor-not-allowed">
                                 </div>
 
-                                <!-- Unit (Read-only, auto-populated) -->
+                                <!-- Unit -->
                                 <div>
                                     <label
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Unit</label>
@@ -140,9 +333,13 @@
                                     <label
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
                                         Qty</label>
-                                    <input type="number" name="qty[]" x-model.number="row.qty"
-                                        @input="calculateRow(row)" min="1" :disabled="!row.batchId"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-bold text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                    <input type="number" name="qty[]" x-model.number="row.qty" @input="validateQty(row)"
+                                        min="1" :max="row.maxQty" :disabled="!row.batchId"
+                                        class="form-input w-full h-12 rounded-xl px-4 font-bold text-gray-900 outline-none text-center">
+                                    <p class="text-[10px] text-red-600 font-bold mt-1 text-center"
+                                        x-show="row.maxQty > 0">
+                                        Max: <span x-text="row.maxQty"></span>
+                                    </p>
                                 </div>
 
                                 <!-- Refund Rate -->
@@ -151,7 +348,7 @@
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Rate</label>
                                     <input type="number" step="0.01" name="price[]" x-model.number="row.price"
                                         @input="calculateRow(row)" :disabled="!row.batchId"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-red-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                        class="form-input w-full h-12 rounded-xl px-4 font-medium text-gray-900 outline-none text-center">
                                 </div>
                             </div>
 
@@ -168,12 +365,18 @@
 
                     <!-- Add Item Button -->
                     <button type="button" @click="addRow()"
-                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50/50 transition-all font-bold flex items-center justify-center gap-2">
+                        :disabled="(!invoiceId && !freeformMode) || (invoiceId && rows.length >= availableItems.length)"
+                        class="w-full py-6 border-2 border-dashed border-gray-200 rounded-3xl text-gray-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50/50 transition-all font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path d="M12 4v16m8-8H4"></path>
                         </svg>
                         Add Another Item
                     </button>
+                    <p class="text-xs text-red-600 font-bold text-center mt-2"
+                        x-show="invoiceId && rows.length >= availableItems.length && availableItems.length > 0"
+                        style="display: none;">
+                        All available items added.
+                    </p>
                 </div>
 
                 <!-- Hidden submit -->
@@ -199,7 +402,6 @@
                         <span class="font-bold text-gray-900" x-text="rows.length"></span>
                     </div>
                 </div>
-
                 <div class="bg-red-50 rounded-2xl p-6 border border-red-100">
                     <div class="text-xs font-bold uppercase tracking-widest text-red-600 mb-2">Total Refund</div>
                     <div class="text-4xl font-bold text-gray-900">&#8377;<span x-text="grandTotal()"></span></div>
@@ -208,7 +410,7 @@
 
             <div class="p-8 pt-4 border-t border-gray-50">
                 <button type="button" @click="document.getElementById('main-submit-btn').click()"
-                    :disabled="grandTotal() <= 0"
+                    :disabled="grandTotal() <= 0 || !supplierId"
                     class="w-full py-5 rounded-2xl font-bold text-lg text-white bg-gradient-to-r from-red-500 to-red-600 shadow-xl shadow-red-500/20 hover:shadow-red-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
                     <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -220,67 +422,124 @@
         </div>
     </aside>
 
-    <!-- Alpine Script & Datalist -->
-    <datalist id="product-list-global">
-        <template x-for="p in searchResults" :key="p.id">
-            <option :value="p.name"></option>
-        </template>
-    </datalist>
-
 </div>
 
 <script>
     function purchaseReturnLogic() {
         return {
+            supplierId: '', supplierSearch: '', supplierResults: [], supplierOpen: false,
+            invoiceId: '', invoiceSearch: '', availableInvoices: [], invoiceOpen: false,
+            freeformMode: false,
+            availableItems: [],
+
             rows: [],
-            searchResults: [],
 
             init() {
                 this.addRow();
             },
 
-            addRow() {
-                this.rows.push({
-                    id: Date.now(),
-                    productSearch: '',
-                    productId: '',
-                    batchId: '',
-                    availableBatches: [],
-                    qty: 1,
-                    price: 0,
-                    total: 0,
-                    stockDisplay: '',
-                    stockError: false,
-                    size: '',
-                    unit: ''
-                });
+            // ──────── SUPPLIER SEARCH ────────
+            async searchSuppliers() {
+                if (this.supplierSearch.length < 2) { this.supplierResults = []; return; }
+                const res = await fetch(`{% url 'search_suppliers' %}?q=${this.supplierSearch}`);
+                this.supplierResults = await res.json();
+                this.supplierOpen = true;
+            },
+            selectSupplier(s) {
+                this.supplierId = s.id;
+                this.supplierSearch = `${s.name} (${s.phone || ''})`;
+                this.supplierOpen = false;
+                this.resetInvoiceAndItems();
+                this.searchInvoices();
             },
 
-            removeRow(index) {
-                if (this.rows.length > 1) this.rows.splice(index, 1);
+            // ──────── INVOICE SEARCH ────────
+            async searchInvoices() {
+                if (!this.supplierId) return;
+                try {
+                    const q = this.invoiceSearch || '';
+                    const res = await fetch(`/get-supplier-invoices/?supplier_id=${this.supplierId}&q=${q}`);
+                    this.availableInvoices = await res.json();
+                    if (this.availableInvoices.length > 0) this.invoiceOpen = true;
+                } catch (e) { console.error(e); }
+            },
+            openInvoiceDropdown() { this.searchInvoices(); },
+            get filteredInvoicesList() {
+                return this.availableInvoices;
+            },
+            async selectInvoice(inv) {
+                this.invoiceId = inv.id;
+                this.invoiceSearch = `#${inv.invoice_number} (${inv.date}) - ₹${inv.total_amount.toFixed(2)}`;
+                this.invoiceOpen = false;
+                this.freeformMode = false;
+                this.fetchInvoiceItems(inv.id);
+            },
+            async fetchInvoiceItems(invoiceId) {
+                try {
+                    const response = await fetch(`/get-purchase-invoice-items/?invoice_id=${invoiceId}`);
+                    this.availableItems = await response.json();
+                    this.rows = []; this.addRow();
+                } catch (error) { console.error('Error fetching items:', error); }
+            },
+            skipInvoice() {
+                this.freeformMode = true;
+                this.invoiceId = '';
+                this.invoiceSearch = '';
+                this.availableItems = [];
+                this.rows = []; this.addRow();
+            },
+            clearInvoice() {
+                this.invoiceId = '';
+                this.invoiceSearch = '';
+                this.freeformMode = false;
+                this.availableItems = [];
+                this.rows = []; this.addRow();
+            },
+            resetInvoiceAndItems() {
+                this.invoiceId = ''; this.invoiceSearch = '';
+                this.availableInvoices = []; this.availableItems = [];
+                this.freeformMode = false;
+                this.rows = []; this.addRow();
             },
 
+            // ──────── INVOICE-LINKED ITEM SELECTION ────────
+            getFilteredItems(currentRow) {
+                const usedBatchIds = this.rows.filter(r => r !== currentRow && r.batchId).map(r => r.batchId);
+                return this.availableItems.filter(item => !usedBatchIds.includes(String(item.batch_id)));
+            },
+            selectInvoiceItem(row, item) {
+                row.batchId = String(item.batch_id);
+                row.productName = item.product_name;
+                row.size = item.size;
+                row.unit = item.unit;
+                row.batchNumber = item.batch_number;
+                row.mfgDate = item.mfg_date;
+                row.expDate = item.exp_date;
+                row.maxQty = item.max_returnable;
+                row.price = item.price;
+                row.itemOpen = false;
+                row.qty = 1;
+                row.stockDisplay = item.current_stock;
+                this.calculateRow(row);
+            },
+
+            // ──────── FREEFORM PRODUCT SEARCH ────────
             async searchProducts(row) {
-                if (row.productSearch.length < 2) return;
+                if (row.productSearch.length < 2) { row.productResults = []; return; }
                 try {
                     const response = await fetch(`{% url 'search_products' %}?format=json&q=${row.productSearch}`);
-                    const products = await response.json();
-                    this.searchResults = products;
-
-                    // Auto-select if exact match
-                    const match = products.find(p => p.name.toLowerCase() === row.productSearch.toLowerCase());
-                    if (match) {
-                        row.productId = match.id;
-                        this.fetchBatches(row);
-                    } else {
-                        row.productId = '';
-                        row.availableBatches = [];
-                    }
-                } catch (e) {
-                    console.error("Search failed", e);
-                }
+                    row.productResults = await response.json();
+                    row.productOpen = true;
+                } catch (e) { console.error("Search failed", e); }
             },
-
+            async selectProduct(row, product) {
+                row.productId = product.id;
+                row.productSearch = product.name;
+                row.productName = product.name;
+                row.productOpen = false;
+                // Fetch batches
+                await this.fetchBatches(row);
+            },
             async fetchBatches(row) {
                 if (!row.productId) return;
                 try {
@@ -292,40 +551,54 @@
                     row.price = 0;
                     row.size = '';
                     row.unit = '';
-                } catch (e) {
-                    console.error("Batch fetch failed", e);
-                }
+                } catch (e) { console.error("Batch fetch failed", e); }
             },
-
             updateBatchDetails(row) {
                 const batch = row.availableBatches.find(b => b.id == row.batchId);
                 if (batch) {
                     row.stockDisplay = batch.quantity;
+                    row.maxQty = batch.quantity;
                     row.price = parseFloat(batch.cost) || 0;
                     row.size = batch.size || '';
                     row.unit = batch.unit || '';
+                    row.batchNumber = batch.batch_number || '';
                     this.calculateRow(row);
                 } else {
                     row.stockDisplay = '';
+                    row.maxQty = 0;
                     row.price = 0;
                     row.size = '';
                     row.unit = '';
                 }
             },
 
+            // ──────── ROW MANAGEMENT ────────
+            validateQty(row) {
+                if (row.maxQty && row.qty > row.maxQty) row.qty = row.maxQty;
+                if (row.qty < 1) row.qty = 1;
+                this.calculateRow(row);
+            },
+            addRow() {
+                this.rows.push({
+                    id: Date.now(), batchId: '', qty: 1, price: 0, total: 0,
+                    productName: '', productSearch: '', itemOpen: false, productOpen: false,
+                    size: '', unit: '', batchNumber: '', maxQty: 0,
+                    mfgDate: '', expDate: '',
+                    stockDisplay: '', stockError: false,
+                    productId: '', availableBatches: [], productResults: []
+                });
+            },
+            removeRow(index) { if (this.rows.length > 1) this.rows.splice(index, 1); },
             calculateRow(row) {
-                // Stock Validation
-                if (row.stockDisplay !== '') {
+                // Stock validation for freeform mode
+                if (row.stockDisplay !== '' && !this.invoiceId) {
                     const stock = parseFloat(row.stockDisplay);
                     row.stockError = row.qty > stock;
                 }
-
                 row.total = (row.qty || 0) * (row.price || 0);
             },
-
-            grandTotal() {
-                return this.rows.reduce((sum, row) => sum + (row.total || 0), 0).toFixed(2);
-            }
+            totalQty() { return this.rows.reduce((sum, row) => sum + (row.qty || 0), 0); },
+            grandTotal() { return this.rows.reduce((sum, row) => sum + row.total, 0).toFixed(2); }
         }
     }
 </script>

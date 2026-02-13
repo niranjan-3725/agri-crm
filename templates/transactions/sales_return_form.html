@@ -2,6 +2,34 @@
 {% load humanize %}
 
 {% block content %}
+<style>
+    .form-input {
+        border: 1.5px solid #cbd5e1 !important;
+        background-color: #f8fafc !important;
+        transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-input:hover {
+        border-color: #94a3b8 !important;
+    }
+
+    .form-input:focus {
+        border-color: #f59e0b !important;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1) !important;
+        background-color: #fff !important;
+    }
+
+    .form-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #f1f5f9 !important;
+        border-color: #e2e8f0 !important;
+    }
+
+    .form-input::placeholder {
+        color: #94a3b8;
+    }
+</style>
 <div x-data="salesReturnLogic()" class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]">
 
     <!-- LEFT: Main Form Area -->
@@ -30,80 +58,86 @@
                 {% csrf_token %}
 
                 <!-- Master Fields Card -->
-                <div
-                    class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div class="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100 mb-8 space-y-8">
 
-                    <!-- Searchable Customer -->
-                    <div class="relative">
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Customer</label>
-                        <div class="relative group" @click.away="customerOpen = false">
-                            <input type="hidden" name="customer" x-model="customerId">
-                            <input type="text" x-model="customerSearch" @input.debounce.300ms="searchCustomers()"
-                                @focus="customerOpen = true" placeholder="Search by Name or Mobile..."
-                                class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400">
+                    <!-- Row 1: Customer + Invoice (wider fields) -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                            <!-- Dropdown -->
-                            <div x-show="customerOpen && customerResults.length > 0"
-                                class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
-                                style="display: none;">
-                                <template x-for="c in customerResults" :key="c.id">
-                                    <div @click="selectCustomer(c)"
-                                        class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
-                                        <div class="font-bold text-gray-900" x-text="c.name"></div>
-                                        <div class="text-xs text-gray-500">
-                                            <span x-text="c.city || 'No City'"></span> • <span
-                                                x-text="c.mobile_no"></span>
+                        <!-- Searchable Customer -->
+                        <div class="relative">
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Customer</label>
+                            <div class="relative group" @click.away="customerOpen = false">
+                                <input type="hidden" name="customer" x-model="customerId">
+                                <input type="text" x-model="customerSearch" @input.debounce.300ms="searchCustomers()"
+                                    @focus="customerOpen = true" placeholder="Search by Name or Mobile..."
+                                    class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+
+                                <!-- Dropdown -->
+                                <div x-show="customerOpen && customerResults.length > 0"
+                                    class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                    style="display: none;">
+                                    <template x-for="c in customerResults" :key="c.id">
+                                        <div @click="selectCustomer(c)"
+                                            class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                            <div class="font-bold text-gray-900" x-text="c.name"></div>
+                                            <div class="text-xs text-gray-500">
+                                                <span x-text="c.city || 'No City'"></span> • <span
+                                                    x-text="c.mobile_no"></span>
+                                            </div>
                                         </div>
-                                    </div>
-                                </template>
+                                    </template>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Searchable Invoice -->
-                    <div class="relative">
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Original
-                            Invoice</label>
-                        <div class="relative group" @click.away="invoiceOpen = false">
-                            <input type="hidden" name="original_sale" x-model="invoiceId">
-                            <input type="text" x-model="invoiceSearch" @focus="openInvoiceDropdown()"
-                                @input.debounce.300ms="searchInvoices()" :disabled="!customerId"
-                                placeholder="Select Invoice..."
-                                class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all placeholder-gray-400 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <!-- Searchable Invoice -->
+                        <div class="relative">
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Original
+                                Invoice</label>
+                            <div class="relative group" @click.away="invoiceOpen = false">
+                                <input type="hidden" name="original_sale" x-model="invoiceId">
+                                <input type="text" x-model="invoiceSearch" @focus="openInvoiceDropdown()"
+                                    @input.debounce.300ms="searchInvoices()" :disabled="!customerId"
+                                    placeholder="Select Invoice..."
+                                    class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
 
-                            <!-- Dropdown -->
-                            <div x-show="invoiceOpen && availableInvoices.length > 0"
-                                class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
-                                style="display: none;">
-                                <template x-for="inv in filteredInvoicesList" :key="inv.id">
-                                    <div @click="selectInvoice(inv)"
-                                        class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
-                                        <div class="font-bold text-gray-900" x-text="'#' + inv.invoice_number"></div>
-                                        <div class="text-xs text-gray-500 flex justify-between">
-                                            <span x-text="inv.date"></span>
-                                            <span class="font-bold text-amber-600"
-                                                x-text="'₹' + inv.grand_total.toFixed(2)"></span>
+                                <!-- Dropdown -->
+                                <div x-show="invoiceOpen && availableInvoices.length > 0"
+                                    class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 max-h-64 overflow-y-auto"
+                                    style="display: none;">
+                                    <template x-for="inv in filteredInvoicesList" :key="inv.id">
+                                        <div @click="selectInvoice(inv)"
+                                            class="px-5 py-3 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-none transition-colors">
+                                            <div class="font-bold text-gray-900" x-text="'#' + inv.invoice_number">
+                                            </div>
+                                            <div class="text-xs text-gray-500 flex justify-between">
+                                                <span x-text="inv.date"></span>
+                                                <span class="font-bold text-amber-600"
+                                                    x-text="'₹' + inv.grand_total.toFixed(2)"></span>
+                                            </div>
                                         </div>
+                                    </template>
+                                    <!-- No Results -->
+                                    <div x-show="filteredInvoicesList.length === 0"
+                                        class="p-4 text-center text-gray-400 text-sm">
+                                        No invoices found.
                                     </div>
-                                </template>
-                                <!-- No Results -->
-                                <div x-show="filteredInvoicesList.length === 0"
-                                    class="p-4 text-center text-gray-400 text-sm">
-                                    No invoices found.
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Return Date -->
-                    <div>
-                        <label
-                            class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
-                            Date</label>
-                        <input type="date" name="date" value="{% now 'Y-m-d' %}"
-                            class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all">
+                    <!-- Row 2: Return Date -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div>
+                            <label
+                                class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Return
+                                Date</label>
+                            <input type="date" name="date" value="{% now 'Y-m-d' %}"
+                                class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none">
+                        </div>
                     </div>
                 </div>
 
@@ -144,7 +178,7 @@
                                     <input type="text" x-model="row.productName"
                                         @click="!invoiceId ? null : row.itemOpen = !row.itemOpen"
                                         placeholder="Select Item..." readonly
-                                        class="w-full h-14 bg-gray-50 rounded-2xl px-5 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all cursor-pointer disabled:cursor-not-allowed placeholder-gray-400"
+                                        class="form-input w-full h-14 rounded-2xl px-5 font-medium text-gray-900 outline-none cursor-pointer"
                                         :disabled="!invoiceId">
 
                                     <!-- Dropdown -->
@@ -203,7 +237,7 @@
                                         Qty</label>
                                     <input type="number" name="qty[]" x-model.number="row.qty" @input="validateQty(row)"
                                         min="1" :max="row.maxQty" :disabled="!row.batchId"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-bold text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                        class="form-input w-full h-12 rounded-xl px-4 font-bold text-gray-900 outline-none text-center">
                                     <p class="text-[10px] text-amber-600 font-bold mt-1 text-center"
                                         x-show="row.maxQty > 0">
                                         Max: <span x-text="row.maxQty"></span>
@@ -216,7 +250,7 @@
                                         class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Rate</label>
                                     <input type="number" step="0.01" name="price[]" x-model.number="row.price"
                                         @input="calculateRow(row)" :disabled="!row.batchId"
-                                        class="w-full h-12 bg-gray-50 rounded-xl px-4 font-medium text-gray-900 border border-transparent hover:border-gray-200 focus:border-amber-500/20 focus:bg-white outline-none transition-all text-center disabled:bg-gray-100 disabled:text-gray-400">
+                                        class="form-input w-full h-12 rounded-xl px-4 font-medium text-gray-900 outline-none text-center">
                                 </div>
                             </div>
 

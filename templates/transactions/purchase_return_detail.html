@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load humanize %}
+{% load transaction_extras %}
 
 {% block content %}
 <div class="min-h-screen bg-[#F8F9FA] p-6 text-sm font-medium text-gray-900">
@@ -26,7 +27,7 @@
             </div>
 
             <div class="flex items-center gap-3">
-                 <form method="POST" action="{% url 'delete_purchase_return' return.pk %}"
+                <form method="POST" action="{% url 'delete_purchase_return' return.pk %}"
                     onsubmit="return confirm('CRITICAL ACTION:\n\n1. This will RESTORE stock to inventory.\n2. This will DELETE the debit note/payment entry.\n\nAre you sure you want to proceed?');">
                     {% csrf_token %}
                     <button type="submit"
@@ -62,32 +63,39 @@
                     <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Reason</p>
                     <p class="text-base font-medium text-gray-700">{{ return.reason }}</p>
                     {% if return.original_invoice %}
-                    <a href="{% url 'purchase_detail' return.original_invoice.pk %}" class="text-xs text-blue-500 hover:underline mt-1 block">Ref Invoice: #{{ return.original_invoice.invoice_number }}</a>
+                    <a href="{% url 'purchase_detail' return.original_invoice.pk %}"
+                        class="text-xs text-blue-500 hover:underline mt-1 block">Ref Invoice: #{{
+                        return.original_invoice.invoice_number }}</a>
                     {% endif %}
                 </div>
 
-                 <!-- Amount -->
+                <!-- Amount -->
                 <div class="text-right">
                     <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Total Refund</p>
                     <p class="text-3xl font-black text-red-600">₹{{ return.total_refund_amount|intcomma }}</p>
-                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide border border-red-100 mt-2">
+                    <span
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide border border-red-100 mt-2">
                         Debit Note Created
                     </span>
                 </div>
             </div>
-             <div class="absolute -right-10 -bottom-10 w-48 h-48 bg-gradient-to-br from-red-50 to-white rounded-full opacity-50 blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
+            <div
+                class="absolute -right-10 -bottom-10 w-48 h-48 bg-gradient-to-br from-red-50 to-white rounded-full opacity-50 blur-2xl group-hover:scale-110 transition-transform duration-700">
+            </div>
         </div>
 
         <!-- Items Table -->
         <div class="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
                 <h3 class="font-bold text-gray-900">Returned Items</h3>
-                <span class="px-3 py-1 bg-gray-200 text-gray-600 rounded-full text-xs font-bold">{{ return.items.count }} Items</span>
+                <span class="px-3 py-1 bg-gray-200 text-gray-600 rounded-full text-xs font-bold">{{ return.items.count
+                    }} Items</span>
             </div>
-            
+
             <div class="overflow-x-auto">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-50/50 border-b border-gray-100 text-xs uppercase text-gray-400 font-bold tracking-wider">
+                    <thead
+                        class="bg-gray-50/50 border-b border-gray-100 text-xs uppercase text-gray-400 font-bold tracking-wider">
                         <tr>
                             <th class="px-6 py-4">#</th>
                             <th class="px-6 py-4">Product</th>
@@ -103,10 +111,12 @@
                             <td class="px-6 py-4 text-gray-300 font-mono text-xs">{{ forloop.counter }}</td>
                             <td class="px-6 py-4">
                                 <p class="font-bold text-gray-900">{{ item.batch.product.name }}</p>
-                                <p class="text-xs text-gray-400 uppercase tracking-tight">{{ item.batch.product.category.name }}</p>
+                                <p class="text-xs text-gray-400 uppercase tracking-tight">{{
+                                    item.batch.product.category.name }}</p>
                             </td>
                             <td class="px-6 py-4">
-                                <span class="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-600 text-xs font-mono font-medium border border-gray-200 group-hover:bg-white group-hover:border-red-200 transition-colors">
+                                <span
+                                    class="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-600 text-xs font-mono font-medium border border-gray-200 group-hover:bg-white group-hover:border-red-200 transition-colors">
                                     {{ item.batch.batch_number }}
                                 </span>
                             </td>

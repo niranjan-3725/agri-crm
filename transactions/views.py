@@ -53,6 +53,25 @@ def search_customers(request):
     
     return JsonResponse(data, safe=False)
 
+def search_suppliers(request):
+    query = request.GET.get('q', '')
+    if query:
+        suppliers = Supplier.objects.filter(
+            Q(name__icontains=query) | 
+            Q(phone__icontains=query)
+        )[:20]
+    else:
+        suppliers = Supplier.objects.all()[:20]
+    
+    data = [{
+        'id': s.id,
+        'name': s.name,
+        'phone': s.phone or '',
+        'gstin': s.gstin or ''
+    } for s in suppliers]
+    
+    return JsonResponse(data, safe=False)
+
 @csrf_exempt
 def create_customer_ajax(request):
     if request.method == 'POST':
@@ -164,6 +183,8 @@ def get_batches_for_product(request):
         'quantity': b.current_quantity,
         'price': float(b.base_selling_price) if b.base_selling_price else 0,
         'cost': float(b.purchase_price) if b.purchase_price else 0,
+        'size': float(b.size) if b.size else 0,
+        'unit': b.unit or '',
         'manufacturing_date': b.manufacturing_date,
         'expiry_date': b.expiry_date
     } for b in batches]
@@ -1137,6 +1158,72 @@ def get_customer_invoices(request):
         
     return HttpResponse(options)
 
+def get_supplier_invoices(request):
+    """Get purchase invoices for a specific supplier (mirrors get_customer_invoices)."""
+    supplier_id = request.GET.get('supplier_id')
+    if not supplier_id:
+        return JsonResponse([], safe=False)
+    
+    invoices = PurchaseInvoice.objects.filter(
+        supplier_id=supplier_id
+    ).order_by('-date')
+    
+    query = request.GET.get('q', '')
+    if query:
+        invoices = invoices.filter(
+            Q(invoice_number__icontains=query) | 
+            Q(total_amount__icontains=query)
+        )
+    
+    invoices = invoices[:20]
+    
+    data = [{
+        'id': inv.id,
+        'invoice_number': inv.invoice_number,
+        'date': inv.date.strftime('%Y-%m-%d'),
+        'total_amount': float(inv.total_amount)
+    } for inv in invoices]
+    return JsonResponse(data, safe=False)
+
+def get_purchase_invoice_items(request):
+    """Get items from a specific purchase invoice for return (mirrors get_invoice_items)."""
+    invoice_id = request.GET.get('invoice_id')
+    if not invoice_id:
+        return JsonResponse([], safe=False)
+    
+    invoice = get_object_or_404(PurchaseInvoice, pk=invoice_id)
+    items_data = []
+    
+    for item in invoice.items.select_related('batch', 'batch__product').all():
+        # Calculate already returned quantity for this batch from this invoice
+        already_returned = PurchaseReturnItem.objects.filter(
+            return_invoice__original_invoice=invoice,
+            batch=item.batch
+        ).aggregate(Sum('quantity'))['quantity__sum'] or 0
+        
+        max_returnable = item.quantity - already_returned
+        # Also cap at current stock
+        max_returnable = min(max_returnable, item.batch.current_quantity)
+        
+        if max_returnable > 0:
+            items_data.append({
+                'id': item.id,
+                'product_name': item.batch.product.name,
+                'batch_id': item.batch.id,
+                'batch_number': item.batch.batch_number,
+                'qty_purchased': item.quantity,
+                'qty_returned_already': already_returned,
+                'max_returnable': max_returnable,
+                'price': float(item.batch.purchase_price) if item.batch.purchase_price else 0,
+                'unit': item.batch.unit,
+                'size': float(item.batch.size),
+                'mfg_date': item.batch.manufacturing_date.strftime('%d-%m-%Y') if item.batch.manufacturing_date else '-',
+                'exp_date': item.batch.expiry_date.strftime('%d-%m-%Y') if item.batch.expiry_date else '-',
+                'current_stock': item.batch.current_quantity
+            })
+    
+    return JsonResponse(items_data, safe=False)
+
 def get_invoice_items(request):
     invoice_id = request.GET.get('invoice_id')
     if not invoice_id:
@@ -1355,10 +1442,17 @@ def create_purchase_return(request):
                 supplier_id = request.POST.get('supplier')
                 date = request.POST.get('date')
                 reason = request.POST.get('reason')
+                original_invoice_id = request.POST.get('original_invoice')
                 supplier = Supplier.objects.get(id=supplier_id)
+                
+                # Link to original purchase invoice if provided
+                original_invoice = None
+                if original_invoice_id:
+                    original_invoice = PurchaseInvoice.objects.get(id=original_invoice_id)
                 
                 purchase_return = PurchaseReturn.objects.create(
                     supplier=supplier,
+                    original_invoice=original_invoice,
                     date=date,
                     reason=reason,
                     total_refund_amount=0
@@ -1368,14 +1462,14 @@ def create_purchase_return(request):
                 quantities = request.POST.getlist('qty[]')
                 prices = request.POST.getlist('price[]') # Refund Price
                 
-                grand_total = 0
+                grand_total = Decimal('0')
                 
                 for i in range(len(batch_ids)):
                     if not batch_ids[i] or not quantities[i]: continue
                     
                     batch_id = batch_ids[i]
                     qty = int(quantities[i])
-                    price = float(prices[i]) if prices[i] else 0
+                    price = Decimal(prices[i]) if prices[i] else Decimal('0')
                     
                     batch = Batch.objects.get(id=batch_id)
                     
@@ -1383,7 +1477,7 @@ def create_purchase_return(request):
                     if qty > batch.current_quantity:
                         raise ValidationError(f"Cannot return {qty} of {batch}. Only {batch.current_quantity} in stock.")
                     
-                    # FIX: Deduct Stock
+                    # Deduct Stock
                     batch.current_quantity -= qty
                     batch.save()
                     
@@ -1399,35 +1493,28 @@ def create_purchase_return(request):
                 purchase_return.total_refund_amount = grand_total
                 purchase_return.save()
                 
-                # FIX: Create Debit Note (SupplierPayment)
+                # Create Debit Note (SupplierPayment)
                 if grand_total > 0:
                     SupplierPayment.objects.create(
-                        invoice=purchase_return.original_invoice, # Can be None now
+                        invoice=original_invoice,
                         amount=grand_total,
-                        payment_mode='DEBIT_NOTE', # Technically 'DEBIT_NOTE' is not in CHOICES yet?
-                        # User Prompt: payment_mode: 'DEBIT_NOTE'
-                        # I should check logic or CHOICES.
-                        # SupplierPayment.PAYMENT_MODE_CHOICES doesn't have DEBIT_NOTE.
-                        # I should add it to CHOICES in models.py as well.
+                        payment_mode='DEBIT_NOTE',
                         purchase_return=purchase_return,
                         notes=f"Auto-debit for Return #{purchase_return.pk}"
                     )
                 
+                messages.success(request, f"Purchase return created successfully. Debit Note: ₹{grand_total}")
                 return redirect('returns_list')
 
         except ValidationError as e:
-            suppliers = Supplier.objects.all()
-            batches = Batch.objects.filter(is_active=True, current_quantity__gt=0)
-            return render(request, 'transactions/purchase_return_form.html', {'suppliers': suppliers, 'batches': batches, 'error': e.message})
+            messages.error(request, f"Error creating return: {e.message}")
+            return redirect('create_purchase_return')
         except Exception as e:
-            suppliers = Supplier.objects.all()
-            batches = Batch.objects.filter(is_active=True, current_quantity__gt=0)
-            return render(request, 'transactions/purchase_return_form.html', {'suppliers': suppliers, 'batches': batches, 'error': str(e)})
+            messages.error(request, f"Error creating return: {str(e)}")
+            return redirect('create_purchase_return')
 
     # GET
-    suppliers = Supplier.objects.all()
-    batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
-    return render(request, 'transactions/purchase_return_form.html', {'suppliers': suppliers, 'batches': batches})
+    return render(request, 'transactions/purchase_return_form.html')
 
 def purchase_return_detail(request, pk):
     purchase_return = get_object_or_404(PurchaseReturn, pk=pk)
