@@ -108,8 +108,7 @@
                                 <h3 class="text-lg font-bold text-gray-900">{{ ret.customer.name }}</h3>
                                 <div class="flex items-center gap-2 text-sm font-medium text-gray-500 mt-0.5">
                                     {% if ret.original_sale %}
-                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs">Ref: #{{
-                                        ret.original_sale.invoice_number }}</span>
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs">Ref: #{{ ret.original_sale.invoice_number }}</span>
                                     {% else %}
                                     <span class="bg-gray-100 px-2 py-0.5 rounded text-xs">Direct Return</span>
                                     {% endif %}
@@ -189,8 +188,7 @@
                             <div>
                                 <h3 class="text-lg font-bold text-gray-900">{{ ret.supplier.name }}</h3>
                                 <div class="flex items-center gap-2 text-sm font-medium text-gray-500 mt-0.5">
-                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs select-all">{{ ret.reason
-                                        }}</span>
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded text-xs select-all">{{ ret.reason }}</span>
                                 </div>
                             </div>
                         </div>
