@@ -32,7 +32,7 @@ class SalesPaymentTest(TestCase):
         """
         url = reverse('create_sale')
         
-        # 1 Qty @ 100. Tax = 5%. Total = 105.
+        # 1 Qty @ 100. Price is Tax Inclusive. Total = 100.
         data = {
             'customer': self.customer.id,
             'date': timezone.now().date(),
@@ -51,16 +51,16 @@ class SalesPaymentTest(TestCase):
         # Check Invoice
         invoice = SalesInvoice.objects.last()
         self.assertIsNotNone(invoice)
-        self.assertEqual(invoice.grand_total, Decimal('105.00'))
+        self.assertEqual(invoice.grand_total, Decimal('100.00'))
         
         # Check Payment
         payment = CustomerPayment.objects.filter(invoice=invoice).first()
         self.assertIsNotNone(payment, "CustomerPayment should be created")
-        self.assertEqual(payment.amount, Decimal('105.00'))
+        self.assertEqual(payment.amount, Decimal('100.00'))
         
         # Check Signal Effect
         invoice.refresh_from_db()
-        self.assertEqual(invoice.amount_received, Decimal('105.00'))
+        self.assertEqual(invoice.amount_received, Decimal('100.00'))
         self.assertEqual(invoice.balance_due, Decimal('0.00'))
         self.assertEqual(invoice.payment_status, 'PAID')
 
@@ -70,7 +70,7 @@ class SalesPaymentTest(TestCase):
         """
         url = reverse('create_sale')
         
-        # 1 Qty @ 100. Total 105. Pay 50.
+        # 1 Qty @ 100. Total 100. Pay 50.
         data = {
             'customer': self.customer.id,
             'date': timezone.now().date(),
@@ -94,7 +94,7 @@ class SalesPaymentTest(TestCase):
         # Check Signal
         invoice.refresh_from_db()
         self.assertEqual(invoice.amount_received, Decimal('50.00'))
-        self.assertEqual(invoice.balance_due, Decimal('55.00')) # 105 - 50 = 55
+        self.assertEqual(invoice.balance_due, Decimal('50.00')) # 100 - 50 = 50
         self.assertEqual(invoice.payment_status, 'PARTIAL')
 
     def test_create_sale_unpaid(self):

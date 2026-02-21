@@ -14,7 +14,7 @@ def dashboard(request):
     expiring_soon = Batch.objects.filter(expiry_date__range=[today, thirty_days_later], is_active=True).count()
     
     # Today's Sales
-    todays_sales = SalesInvoice.objects.filter(date=today).aggregate(Sum('grand_total'))['grand_total__sum'] or 0
+    todays_sales = SalesInvoice.objects.filter(date=today, status='ACTIVE').aggregate(Sum('grand_total'))['grand_total__sum'] or 0
     
     context = {
         'low_stock_count': low_stock_count,

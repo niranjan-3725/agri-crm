@@ -1,0 +1,23 @@
+Creating test database for alias 'default' ('test_agri_crm_db')...
+
+test_create_purchase_creates_ledger_entry_and_updates_batch (transactions.test_legacy_tests.InwardFlowLedgerTests.test_create_purchase_creates_ledger_entry_and_updates_batch)
+Gap 4 fix: create_purchase must create a + StockMovement and update Batch qty. ... ok
+test_purchase_delete_creates_negative_ledger_and_reverses_stock (transactions.test_legacy_tests.InwardFlowLedgerTests.test_purchase_delete_creates_negative_ledger_and_reverses_stock)
+Gap 3 fix: purchase_delete must create a - StockMovement and deduct stock. ... ok
+test_two_items_same_batch_deducts_correctly (transactions.test_legacy_tests.StaleStateSaleFixTests.test_two_items_same_batch_deducts_correctly)
+If two line items reference the same batch (qty=7 + qty=5), total deduction ... ok
+test_invoice_deletion_restoration (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_invoice_deletion_restoration)
+Test Invoice Deletion Restoration: Deleting a valid invoice restores stock via ledger. ... ok
+test_negative_stock_block_on_sale (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_negative_stock_block_on_sale)
+Test Negative Stock Block: Try to sell 50 units. Assert transaction rollback. ... ok
+test_sale_deduction_bug_1_fix (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_sale_deduction_bug_1_fix)
+Test Sale Deduction (Bug #1 Fix): Assert StockMovement is created & Batch decreases. ... ok
+test_sale_return_addition (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_sale_return_addition)
+Test Sale Return Addition: Return units, check StockMovement and batch quantity. ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.490s
+
+OK
+Destroying test database for alias 'default' ('test_agri_crm_db')...
+

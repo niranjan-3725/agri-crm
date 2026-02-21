@@ -1,63 +1,237 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto" x-data="{ tab: 'all' }">
-    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <div>
-            <h1 class="text-3xl font-bold text-slate-800">Inventory Management</h1>
-            <p class="text-gray-500">Manage stock, track expiry, and view valuation.</p>
-        </div>
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center shadow-sm">
-            <div class="mr-4 bg-blue-100 p-2 rounded-full">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24"
-                    stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-            </div>
-            <div>
-                <p class="text-xs text-blue-600 uppercase font-bold">Total Stock Value</p>
-                <p class="text-2xl font-bold text-slate-800">₹{{ total_stock_value }}</p>
-            </div>
-        </div>
-    </div>
+<div class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]"
+     x-data="{ activeFilter: '{{ status|default:'' }}' }">
 
-    <!-- Controls -->
-    <div class="bg-white p-4 rounded-lg shadow mb-6">
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4">
-            <!-- Search -->
-            <div class="w-full md:w-1/3">
-                <input type="text" name="q" placeholder="Search products or batch no..."
-                    class="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    hx-get="{% url 'inventory_list' %}" hx-trigger="keyup changed delay:500ms"
-                    hx-target="#inventory-table" hx-push-url="true">
-            </div>
+    <!-- ============================================================ -->
+    <!-- LEFT: Main Content Area                                        -->
+    <!-- ============================================================ -->
+    <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32 xl:pb-12 animate-fade-in">
+        <div class="max-w-5xl mx-auto space-y-10">
 
-            <!-- Filter Tabs -->
-            <div class="flex space-x-2">
-                <a href="{% url 'inventory_list' %}" hx-get="{% url 'inventory_list' %}" hx-target="#inventory-table"
-                    hx-push-url="true"
-                    class="px-4 py-2 rounded-full text-sm font-bold bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    :class="{ 'bg-blue-600 text-white hover:bg-blue-700': '{{ status }}' == 'None' }">
+            <!-- ── Header ─────────────────────────────────────────── -->
+            <header class="flex flex-col gap-2">
+                <!-- Breadcrumb -->
+                <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+                    <span class="bg-blue-50 text-blue-600 px-2 py-1 rounded">Inventory</span>
+                    <span>•</span>
+                    <span>Stock Ledger</span>
+                </div>
+
+                <!-- Title + Search Row -->
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                    <h1 class="text-4xl md:text-5xl font-bold text-gray-900 tracking-tight">
+                        Stock Ledger
+                    </h1>
+
+                    <!-- Search -->
+                    <div class="relative flex-1 md:w-72 group max-w-sm w-full">
+                        <svg class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors w-5 h-5"
+                            xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="m21 21-4.3-4.3" />
+                        </svg>
+                        <input type="text" name="q" value="{{ q|default:'' }}" placeholder="Search product or batch..."
+                            class="w-full bg-white border-2 border-gray-100 focus:border-blue-500/30 rounded-xl py-3 pl-12 pr-4 font-medium text-gray-900 outline-none transition-all placeholder-gray-400"
+                            hx-get="{% url 'inventory_list' %}" hx-trigger="keyup changed delay:500ms"
+                            hx-target="#inventory-table" hx-include="[name='status']" hx-push-url="true">
+                        <!-- Hidden status carrier for HTMX -->
+                        <input type="hidden" name="status" value="{{ status|default:'' }}">
+                    </div>
+                </div>
+            </header>
+
+            <!-- ── Filter Tabs (Alpine.js driven highlights) ────────── -->
+            <div class="bg-white p-1.5 rounded-2xl border border-gray-100 inline-flex shadow-sm gap-1 flex-wrap">
+
+                <!-- All -->
+                <a href="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}"
+                    @click="activeFilter = ''"
+                    hx-get="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}"
+                    hx-target="#inventory-table" hx-push-url="true"
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
+                    :class="activeFilter === '' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'">
                     All
                 </a>
-                <a href="{% url 'inventory_list' %}?status=low" hx-get="{% url 'inventory_list' %}?status=low"
+
+                <!-- Low Stock -->
+                <a href="{% url 'inventory_list' %}?status=low{% if q %}&q={{ q }}{% endif %}"
+                    @click="activeFilter = 'low'"
+                    hx-get="{% url 'inventory_list' %}?status=low{% if q %}&q={{ q }}{% endif %}"
                     hx-target="#inventory-table" hx-push-url="true"
-                    class="px-4 py-2 rounded-full text-sm font-bold bg-red-50 text-red-600 hover:bg-red-100">
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
+                    :class="activeFilter === 'low' ? 'bg-amber-500 text-white shadow-md' : 'text-amber-600 hover:bg-amber-50'">
                     Low Stock
                 </a>
-                <a href="{% url 'inventory_list' %}?status=expired" hx-get="{% url 'inventory_list' %}?status=expired"
+
+                <!-- Expired -->
+                <a href="{% url 'inventory_list' %}?status=expired{% if q %}&q={{ q }}{% endif %}"
+                    @click="activeFilter = 'expired'"
+                    hx-get="{% url 'inventory_list' %}?status=expired{% if q %}&q={{ q }}{% endif %}"
                     hx-target="#inventory-table" hx-push-url="true"
-                    class="px-4 py-2 rounded-full text-sm font-bold bg-orange-50 text-orange-600 hover:bg-orange-100">
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
+                    :class="activeFilter === 'expired' ? 'bg-red-600 text-white shadow-md' : 'text-red-600 hover:bg-red-50'">
                     Expired
                 </a>
+
+                <!-- Out of Stock -->
+                <a href="{% url 'inventory_list' %}?status=out{% if q %}&q={{ q }}{% endif %}"
+                    @click="activeFilter = 'out'"
+                    hx-get="{% url 'inventory_list' %}?status=out{% if q %}&q={{ q }}{% endif %}"
+                    hx-target="#inventory-table" hx-push-url="true"
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
+                    :class="activeFilter === 'out' ? 'bg-gray-700 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'">
+                    Out of Stock
+                </a>
+
+            </div>
+
+            <!-- ── Batch Card List (HTMX Target) ──────────────────── -->
+            <div id="inventory-table">
+                {% include 'inventory/partials/inventory_table.html' %}
+            </div>
+
+        </div>
+    </main>
+
+    <!-- ============================================================ -->
+    <!-- RIGHT: Sticky Stats Panel                                      -->
+    <!-- ============================================================ -->
+    <aside class="xl:w-[400px] bg-white border-l border-gray-100 z-40 relative">
+        <div
+            class="xl:fixed xl:top-0 xl:right-0 xl:w-[400px] h-full flex flex-col pt-10 border-l border-gray-100 bg-white">
+
+            <!-- Panel Title -->
+            <div class="p-8 pb-4 border-b border-gray-50 hidden xl:block">
+                <h2 class="text-lg font-bold text-gray-900">Stock Overview</h2>
+                <p class="text-sm text-gray-400 mt-1">Live inventory snapshot.</p>
+            </div>
+
+            <div class="flex-1 p-8 space-y-6 overflow-y-auto custom-scrollbar">
+
+                <!-- Hero Card: Total Stock Value -->
+                <div
+                    class="bg-gray-900 text-white rounded-[2rem] p-6 shadow-xl shadow-gray-900/10 relative overflow-hidden group">
+                    <div
+                        class="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 group-hover:scale-110 transition-transform duration-700">
+                    </div>
+                    <div class="relative z-10">
+                        <div class="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">Total Stock Value
+                        </div>
+                        <div class="text-4xl font-bold tracking-tight mb-3">₹{{ total_stock_value|intcomma }}</div>
+                        <div
+                            class="flex items-center gap-2 text-sm font-medium text-blue-400 bg-blue-400/10 px-3 py-1.5 rounded-lg w-fit">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path
+                                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            </svg>
+                            {{ total_batch_count }} active batch{{ total_batch_count|pluralize:"es" }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert Cards Row -->
+                <div class="grid grid-cols-1 gap-4">
+
+                    <!-- Low Stock Alert -->
+                    <div class="bg-amber-50 rounded-2xl p-5 border border-amber-100 flex items-center gap-4">
+                        <div class="p-2.5 bg-amber-100 rounded-xl text-amber-600 shrink-0">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-amber-600 text-xs font-bold uppercase tracking-wider">Low Stock</p>
+                            <p class="text-2xl font-bold text-amber-700">{{ low_stock_count }}</p>
+                            <p class="text-amber-600/70 text-xs font-medium">batch{{ low_stock_count|pluralize:"es" }}
+                                below 10 units</p>
+                        </div>
+                        <a href="{% url 'inventory_list' %}?status=low"
+                            class="text-amber-500 hover:text-amber-700 transition-colors shrink-0"
+                            title="View Low Stock">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path d="M9 5l7 7-7 7" />
+                            </svg>
+                        </a>
+                    </div>
+
+                    <!-- Expiring Soon Alert -->
+                    <div class="bg-red-50 rounded-2xl p-5 border border-red-100 flex items-center gap-4">
+                        <div class="p-2.5 bg-red-100 rounded-xl text-red-600 shrink-0">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-red-600 text-xs font-bold uppercase tracking-wider">Expiring Soon</p>
+                            <p class="text-2xl font-bold text-red-700">{{ expiring_soon_count }}</p>
+                            <p class="text-red-600/70 text-xs font-medium">batch{{ expiring_soon_count|pluralize:"es" }}
+                                within 30 days</p>
+                        </div>
+                        <a href="{% url 'inventory_list' %}?status=expired"
+                            class="text-red-500 hover:text-red-700 transition-colors shrink-0" title="View Expired">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path d="M9 5l7 7-7 7" />
+                            </svg>
+                        </a>
+                    </div>
+
+                    <!-- Out of Stock -->
+                    <div class="bg-gray-100 rounded-2xl p-5 border border-gray-200 flex items-center gap-4">
+                        <div class="p-2.5 bg-gray-200 rounded-xl text-gray-500 shrink-0">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-gray-500 text-xs font-bold uppercase tracking-wider">Out of Stock</p>
+                            <p class="text-2xl font-bold text-gray-700">{{ out_of_stock_count }}</p>
+                            <p class="text-gray-400 text-xs font-medium">batch{{ out_of_stock_count|pluralize:"es" }} at
+                                zero units</p>
+                        </div>
+                        <a href="{% url 'inventory_list' %}?status=out"
+                            class="text-gray-400 hover:text-gray-600 transition-colors shrink-0"
+                            title="View Out of Stock">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path d="M9 5l7 7-7 7" />
+                            </svg>
+                        </a>
+                    </div>
+
+                </div>
+
+                <!-- Top Categories by Value -->
+                <div class="space-y-4 pt-2">
+                    <div class="text-xs font-bold text-gray-400 uppercase tracking-widest">Top Categories by Value</div>
+                    <div class="space-y-3">
+                        {% for cat in top_categories %}
+                        <div class="flex items-center gap-3">
+                            <div
+                                class="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
+                                {{ forloop.counter }}
+                            </div>
+                            <div class="flex-1 text-sm font-bold text-gray-700 truncate">
+                                {{ cat.product__category__name|default:"Uncategorised" }}
+                            </div>
+                            <div class="text-sm font-medium text-gray-400 shrink-0">
+                                ₹{{ cat.total_value|intcomma }}
+                            </div>
+                        </div>
+                        {% empty %}
+                        <p class="text-sm text-gray-400 italic">No category data available.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+
             </div>
         </div>
-    </div>
-
-    <div id="inventory-table">
-        {% include 'inventory/partials/inventory_table.html' %}
-    </div>
+    </aside>
 
 </div>
 {% endblock %}

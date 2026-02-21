@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 from master_data.models import Product, Customer, Supplier, Category, Manufacturer
 from inventory.models import Batch
+from inventory.services import process_stock_movement, InsufficientStockError
 from .models import SalesInvoice, SalesItem, PurchaseInvoice, PurchaseItem, PurchaseReturn, PurchaseReturnItem, SalesReturn, SalesReturnItem, SupplierPayment, CustomerPayment
 from django.contrib import messages
 
@@ -242,7 +243,6 @@ def create_sale(request):
                     taxable_value = total / (1 + (tax_rate_float / 100))
                     tax_amount = total - taxable_value
                     
-                    # Create Item (Signals will handle stock deduction)
                     item = SalesItem(
                         invoice=invoice,
                         batch=batch,
@@ -252,9 +252,23 @@ def create_sale(request):
                         tax_amount=tax_amount,
                         total_amount=total
                     )
+                    # Refresh batch to get DB-level qty (stale-state fix for multi-item same-batch)
+                    batch.refresh_from_db()
+                    item.batch = batch
                     # Run validation (checks stock)
                     item.clean()
                     item.save()
+                    
+                    # Atomic STOCK DEDUCTION via Ledger Service
+                    try:
+                        process_stock_movement(
+                            batch_id=batch.id,
+                            quantity=-qty,
+                            doc_type='SalesInvoice',
+                            doc_id=invoice.id
+                        )
+                    except InsufficientStockError as e:
+                        raise ValidationError(str(e))
                     
                     total_taxable += taxable_value
                     # Approximate split
@@ -306,7 +320,7 @@ def create_sale(request):
     return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'batches': batches})
 
 def sales_list(request):
-    invoices_list = SalesInvoice.objects.select_related('customer').all().order_by('-date', '-id')
+    invoices_list = SalesInvoice.objects.select_related('customer').filter(status='ACTIVE').order_by('-date', '-id')
     
     # Filter
     query = request.GET.get('q')
@@ -345,38 +359,31 @@ def invoice_detail(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
     return render(request, 'transactions/invoice_detail.html', {'invoice': invoice})
 
-@transaction.atomic
 def delete_invoice(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
     
-    # Refund Wallet Payments (only positive amounts, reversals are negative)
-    for payment in invoice.payments.filter(amount__gt=0):
-        if payment.payment_mode == 'WALLET':
-            if invoice.customer:
-                invoice.customer.wallet_balance += payment.amount
-                invoice.customer.save()
-                print(f"Refunded {payment.amount} to Wallet for Invoice #{invoice.pk}")
+    try:
+        invoice.cancel()  # Atomic: reverses stock, refunds wallet, marks CANCELLED
+    except ValidationError as e:
+        messages.error(request, str(e))
+        return redirect('invoice_detail', pk=pk)
     
-    # Delete payments in correct order to respect reversal_of FK constraint
-    # First: Delete reversal entries (those that have reversal_of set)
-    invoice.payments.filter(reversal_of__isnull=False).delete()
-    # Then: Delete original payments
-    invoice.payments.all().delete()
-    
-    # Delete the invoice
-    invoice.delete()
-    
-    messages.success(request, "Invoice deleted and wallet refunded if applicable.")
+    messages.success(request, f"Invoice #{invoice.invoice_number} has been cancelled. Stock restored.")
     return redirect('sales_list')
 
 def edit_sale(request, pk):
-    """Edit an existing sales invoice - follows purchase_edit pattern."""
-    invoice = get_object_or_404(SalesInvoice, pk=pk)
+    """Sprint 4: Amend lifecycle — cancels old invoice, creates a new amended version."""
+    original_invoice = get_object_or_404(SalesInvoice, pk=pk)
     customers = Customer.objects.all()
     
-    # Build existing items for pre-population
+    # Block editing of cancelled invoices
+    if original_invoice.status == 'CANCELLED':
+        messages.error(request, "Cannot edit a cancelled invoice.")
+        return redirect('invoice_detail', pk=pk)
+    
+    # Build existing items for pre-population (GET rendering)
     existing_items = []
-    for item in invoice.items.select_related('batch__product'):
+    for item in original_invoice.items.select_related('batch__product'):
         size_val = item.batch.size if item.batch.size else ''
         unit_val = item.batch.unit or ''
         existing_items.append({
@@ -402,21 +409,21 @@ def edit_sale(request, pk):
         try:
             with transaction.atomic():
                 customer_id = request.POST.get('customer')
-                date = request.POST.get('date')
+                date_val = request.POST.get('date')
                 
                 customer = Customer.objects.get(id=customer_id) if customer_id else None
                 
-                # Restore stock from old items before deleting
-                for item in invoice.items.all():
-                    item.batch.current_quantity += item.quantity
-                    item.batch.save()
-                    item.delete()
+                # ── Step 1: Cancel the original invoice ──
+                # This atomically reverses stock and refunds wallet
+                original_invoice.cancel()
                 
-                # Update invoice header
-                invoice.customer = customer
-                invoice.date = date
+                # Free up the invoice_number for the amended doc
+                old_number = original_invoice.invoice_number
+                SalesInvoice.objects.filter(pk=original_invoice.pk).update(
+                    invoice_number=f"{old_number}-C"
+                )
                 
-                # Process new items
+                # ── Step 2: Create a NEW amended invoice ──
                 batch_ids = request.POST.getlist('batch_id[]')
                 quantities = request.POST.getlist('qty[]')
                 prices = request.POST.getlist('price[]')
@@ -425,6 +432,16 @@ def edit_sale(request, pk):
                 total_cgst = 0
                 total_sgst = 0
                 grand_total = 0
+                
+                new_invoice = SalesInvoice.objects.create(
+                    customer=customer,
+                    date=date_val,
+                    total_taxable=0,
+                    total_cgst=0,
+                    total_sgst=0,
+                    grand_total=0,
+                    amended_from=original_invoice,
+                )
                 
                 for i in range(len(batch_ids)):
                     batch_id = batch_ids[i]
@@ -435,6 +452,7 @@ def edit_sale(request, pk):
                         continue
                         
                     batch = Batch.objects.get(id=batch_id)
+                    batch.refresh_from_db()  # Stale-state fix for multi-item same-batch
                     
                     # Calculations (Sprint 45: Back-calculate tax from Total)
                     total = price * qty
@@ -445,12 +463,12 @@ def edit_sale(request, pk):
                     taxable_value = total / (1 + (tax_rate_float / 100))
                     tax_amount = total - taxable_value
                     
-                    # Create Item
+                    # Create Item on the NEW invoice
                     item = SalesItem(
-                        invoice=invoice,
+                        invoice=new_invoice,
                         batch=batch,
                         quantity=qty,
-                        unit_price=price, # Storing Tax-Inclusive Price
+                        unit_price=price,
                         tax_rate=tax_rate,
                         tax_amount=tax_amount,
                         total_amount=total
@@ -458,68 +476,64 @@ def edit_sale(request, pk):
                     item.clean()  # Validate stock
                     item.save()
                     
-                    # Stock deducted by signal
+                    # Stock deduction via Ledger Service
+                    try:
+                        process_stock_movement(
+                            batch_id=batch.id,
+                            quantity=-qty,
+                            doc_type='SalesInvoice',
+                            doc_id=new_invoice.id
+                        )
+                    except InsufficientStockError as e:
+                        raise ValidationError(str(e))
                     
                     total_taxable += taxable_value
                     total_cgst += tax_amount / 2
                     total_sgst += tax_amount / 2
                     grand_total += total
                 
-                # Update Invoice Totals
-                invoice.total_taxable = total_taxable
-                invoice.total_cgst = total_cgst
-                invoice.total_sgst = total_sgst
-                invoice.grand_total = grand_total
-                invoice.save()
+                # ── Step 3: Finalize new invoice totals ──
+                new_invoice.total_taxable = total_taxable
+                new_invoice.total_cgst = total_cgst
+                new_invoice.total_sgst = total_sgst
+                new_invoice.grand_total = grand_total
+                new_invoice.save()
                 
                 # Sprint 22: Payment Status Tracking for Edit
-                # Logic: Create CustomerPayment which triggers signal update_sales_invoice_payment_status
                 payment_status = request.POST.get('payment_status', 'UNPAID')
                 amount_rec_str = request.POST.get('amount_received')
                 
-                # We need to handle the incremental payment
-                # If user says "PAID", they want to pay the *remaining* balance.
-                # If "PARTIAL", they are paying a specific amount *now*.
-                
                 payment_amount_to_record = Decimal('0.00')
                 
-                # Current status (before this edit's payment)
-                # invoice.amount_received is already up to date from previous payments
-                
                 if payment_status == 'PAID':
-                     # Pay off the entire remaining balance
-                     # Balance Due = Grand Total - Amount Received
-                     payment_amount_to_record = invoice.grand_total - invoice.amount_received
+                     payment_amount_to_record = new_invoice.grand_total - new_invoice.amount_received
                      if payment_amount_to_record < 0: payment_amount_to_record = 0
                      
                 elif payment_status == 'PARTIAL' and amount_rec_str:
-                     # This is the *new* payment amount being added, NOT the total paid
-                     # But wait, the UI usually shows "Amount Received" as the *current transaction's* payment in POS
-                     # Let's assume the input is the "amount being paid right now".
                      payment_amount_to_record = Decimal(amount_rec_str)
                 
                 if payment_amount_to_record > 0:
                     CustomerPayment.objects.create(
-                        invoice=invoice,
+                        invoice=new_invoice,
                         amount=payment_amount_to_record,
-                        payment_date=invoice.date, # Assume payment on same date
-                        payment_mode='CASH', # Default for quick sale
-                        notes='Additional Payment via Sales Edit'
+                        payment_date=new_invoice.date,
+                        payment_mode='CASH',
+                        notes='Payment via Sales Edit (Amended)'
                     )
                 
-                return redirect('invoice_detail', pk=invoice.pk)
+                return redirect('invoice_detail', pk=new_invoice.pk)
                 
         except ValidationError as e:
             return render(request, 'transactions/sales_form_v2.html', {
-                'invoice': invoice,
+                'invoice': original_invoice,
                 'customers': customers,
                 'existing_items': existing_items,
                 'existing_items_json': json.dumps(existing_items),
-                'error': e.message
+                'error': e.message if hasattr(e, 'message') else str(e)
             })
         except Exception as e:
             return render(request, 'transactions/sales_form_v2.html', {
-                'invoice': invoice,
+                'invoice': original_invoice,
                 'customers': customers,
                 'existing_items': existing_items,
                 'existing_items_json': json.dumps(existing_items),
@@ -529,16 +543,16 @@ def edit_sale(request, pk):
     # GET: Render form with pre-populated data
     batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
     return render(request, 'transactions/sales_form_v2.html', {
-        'invoice': invoice,
+        'invoice': original_invoice,
         'customers': customers,
         'batches': batches,
         'existing_items': existing_items,
         'existing_items_json': json.dumps(existing_items),
-        'amount_paid': float(invoice.amount_received)
+        'amount_paid': float(original_invoice.amount_received)
     })
 
 def purchase_list(request):
-    invoices_list = PurchaseInvoice.objects.all().order_by('-date', '-id')
+    invoices_list = PurchaseInvoice.objects.filter(status='ACTIVE').order_by('-date', '-id')
     
     # Filter
     query = request.GET.get('q')
@@ -565,13 +579,15 @@ def purchase_list(request):
     # Current Month Total
     monthly_total = PurchaseInvoice.objects.filter(
         date__year=current_year, 
-        date__month=current_month
+        date__month=current_month,
+        status='ACTIVE'
     ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
 
     # Last Month Total
     last_month_total = PurchaseInvoice.objects.filter(
         date__year=prev_year, 
-        date__month=prev_month
+        date__month=prev_month,
+        status='ACTIVE'
     ).aggregate(Sum('total_amount'))['total_amount__sum'] or 0
 
     # Trend Analysis
@@ -628,7 +644,8 @@ def accounts_payable(request):
     thirty_days_ago = today - timedelta(days=30)
     pending_invoices = PurchaseInvoice.objects.filter(
         Q(payment_status__in=['UNPAID', 'PARTIAL']) | 
-        Q(payment_status='PAID', date__gte=thirty_days_ago)
+        Q(payment_status='PAID', date__gte=thirty_days_ago),
+        status='ACTIVE'
     ).order_by('due_date')
 
     # Recent Activity: Last 10 payments
@@ -718,14 +735,20 @@ def purchase_detail(request, pk):
     })
 
 def purchase_edit(request, pk):
-    invoice = get_object_or_404(PurchaseInvoice, pk=pk)
+    """Sprint 4: Amend lifecycle — cancels old invoice, creates a new amended version."""
+    original_invoice = get_object_or_404(PurchaseInvoice, pk=pk)
     suppliers = Supplier.objects.all()
     categories = Category.objects.all()
     manufacturers = Manufacturer.objects.all()
     
+    # Block editing of cancelled invoices
+    if original_invoice.status == 'CANCELLED':
+        messages.error(request, "Cannot edit a cancelled invoice.")
+        return redirect('purchase_detail', pk=pk)
+    
     # Get existing items for pre-population
     existing_items = []
-    for item in invoice.items.select_related('batch__product'):
+    for item in original_invoice.items.select_related('batch__product'):
         # Fallback: if basic_rate is 0, use batch.purchase_price as the cost
         cost = float(item.basic_rate) if item.basic_rate else float(item.batch.purchase_price or 0)
         selling = float(item.selling_price) if item.selling_price else (float(item.batch.base_selling_price) if item.batch.base_selling_price else 0)
@@ -742,7 +765,7 @@ def purchase_edit(request, pk):
         net_cost = cost + (tax_amt / item.quantity if item.quantity else 0)
 
         existing_items.append({
-            'id': item.id, # Row ID (optional but good for key?) Actually rows use counter.
+            'id': item.id,
             'product_id': item.batch.product.id,
             'product_name': item.batch.product.name,
             'searchResults': [],
@@ -770,7 +793,7 @@ def purchase_edit(request, pk):
                 supplier_id = request.POST.get('supplier')
                 if not supplier_id:
                     return render(request, 'transactions/purchase_form.html', {
-                        'invoice': invoice,
+                        'invoice': original_invoice,
                         'suppliers': suppliers,
                         'categories': categories,
                         'manufacturers': manufacturers,
@@ -783,7 +806,7 @@ def purchase_edit(request, pk):
                     supplier = Supplier.objects.get(id=supplier_id)
                 except (ValueError, Supplier.DoesNotExist):
                     return render(request, 'transactions/purchase_form.html', {
-                        'invoice': invoice,
+                        'invoice': original_invoice,
                         'suppliers': suppliers,
                         'categories': categories,
                         'manufacturers': manufacturers,
@@ -792,18 +815,33 @@ def purchase_edit(request, pk):
                         'error': 'Invalid supplier selected. Please choose a valid supplier.'
                     })
                 
-                # Update invoice header
-                invoice.supplier = supplier
-                invoice.invoice_number = request.POST.get('invoice_number')
-                invoice.date = request.POST.get('date')
-                invoice.loading_charges = request.POST.get('loading_charges') or 0
-                invoice.additional_discount = request.POST.get('discount') or 0
+                # ── Step 1: Cancel the original invoice ──
+                original_invoice.cancel()
                 
-                # Delete old items and reverse stock
-                for item in invoice.items.all():
-                    item.batch.current_quantity -= item.quantity
-                    item.batch.save()
-                    item.delete()
+                # Free up the invoice_number for the amended doc
+                old_number = original_invoice.invoice_number
+                PurchaseInvoice.objects.filter(pk=original_invoice.pk).update(
+                    invoice_number=f"{old_number}-C"
+                )
+                
+                # ── Step 2: Create NEW amended invoice ──
+                new_inv_number = request.POST.get('invoice_number') or old_number
+                new_date = request.POST.get('date')
+                loading = request.POST.get('loading_charges') or 0
+                discount = request.POST.get('discount') or 0
+                
+                new_invoice = PurchaseInvoice(
+                    supplier=supplier,
+                    invoice_number=new_inv_number,
+                    date=new_date,
+                    loading_charges=loading,
+                    additional_discount=discount,
+                    total_amount=0,
+                    amended_from=original_invoice,
+                )
+                # Skip due_date auto-calc on first save; will be set properly
+                new_invoice.due_date = None
+                new_invoice.save()
                 
                 # Process new items (same logic as create_purchase)
                 product_names = request.POST.getlist('product_name[]')
@@ -822,7 +860,7 @@ def purchase_edit(request, pk):
                 
                 for i in range(len(product_names)):
                     product_name = product_names[i]
-                    if not product_name: continue # Skip empty rows
+                    if not product_name: continue  # Skip empty rows
                     
                     product = Product.objects.get(name=product_name)
                     
@@ -868,11 +906,8 @@ def purchase_edit(request, pk):
                         batch.purchase_price = net_cost_per_unit
                         batch.save()
                     
-                    batch.current_quantity += qty
-                    batch.save()
-                    
                     PurchaseItem.objects.create(
-                        invoice=invoice,
+                        invoice=new_invoice,
                         batch=batch,
                         quantity=qty,
                         tax_amount=total_tax_amount,
@@ -882,26 +917,35 @@ def purchase_edit(request, pk):
                         total_amount=total_line_amount
                     )
                     
+                    # Add stock via ledger service
+                    process_stock_movement(
+                        batch_id=batch.id,
+                        quantity=qty,
+                        doc_type='PurchaseInvoice',
+                        doc_id=new_invoice.id
+                    )
+                    
                     grand_total += total_line_amount
                 
-                invoice.total_amount = Decimal(str(grand_total + float(invoice.loading_charges) - float(invoice.additional_discount)))
+                # ── Step 3: Finalize new invoice totals ──
+                new_invoice.total_amount = Decimal(str(grand_total + float(new_invoice.loading_charges) - float(new_invoice.additional_discount)))
                 
                 # Sprint 22: Payment Status Tracking
                 payment_status = request.POST.get('payment_status', 'UNPAID')
                 amount_paid = Decimal(request.POST.get('amount_paid') or 0)
                 
                 if payment_status == 'PAID':
-                    amount_paid = invoice.total_amount
+                    amount_paid = new_invoice.total_amount
                     
-                invoice.payment_status = payment_status
-                invoice.amount_paid = amount_paid
-                invoice.save()
+                new_invoice.payment_status = payment_status
+                new_invoice.amount_paid = amount_paid
+                new_invoice.save()
                 
-                return redirect('purchase_detail', pk=invoice.pk)
+                return redirect('purchase_detail', pk=new_invoice.pk)
                 
         except Exception as e:
             return render(request, 'transactions/purchase_form.html', {
-                'invoice': invoice,
+                'invoice': original_invoice,
                 'suppliers': suppliers,
                 'categories': categories,
                 'manufacturers': manufacturers,
@@ -911,7 +955,7 @@ def purchase_edit(request, pk):
             })
     
     return render(request, 'transactions/purchase_form.html', {
-        'invoice': invoice,
+        'invoice': original_invoice,
         'suppliers': suppliers,
         'categories': categories,
         'manufacturers': manufacturers,
@@ -923,11 +967,13 @@ def purchase_delete(request, pk):
     invoice = get_object_or_404(PurchaseInvoice, pk=pk)
     
     if request.method == 'POST':
-        # Reverse stock for all items before deleting
-        for item in invoice.items.all():
-            item.batch.current_quantity -= item.quantity
-            item.batch.save()
-        invoice.delete()
+        try:
+            invoice.cancel()  # Atomic: reverses stock, marks CANCELLED
+        except ValidationError as e:
+            messages.error(request, str(e))
+            return redirect('purchase_detail', pk=pk)
+        
+        messages.success(request, f"Purchase #{invoice.invoice_number} has been cancelled. Stock reversed.")
         return redirect('purchase_list')
     
     return render(request, 'transactions/purchase_confirm_delete.html', {
@@ -1078,6 +1124,14 @@ def create_purchase(request):
                         selling_price=sell_price,
                         profit_margin=margin_val,
                         total_amount=total_line_amount
+                    )
+                    
+                    # Add stock via ledger service (fixes silent bug: qty was never added)
+                    process_stock_movement(
+                        batch_id=batch.id,
+                        quantity=qty,
+                        doc_type='PurchaseInvoice',
+                        doc_id=invoice.id
                     )
                     
                     grand_total += total_line_amount
@@ -1346,10 +1400,14 @@ def create_sales_return(request):
                     )
                     items_created += 1
                     
-                    # INWARD Stock Adjustment
-                    batch.current_quantity += qty
-                    batch.save()
-                    print(f"DEBUG: Updated batch stock: {batch.current_quantity}")
+                    # INWARD Stock Adjustment via Ledger Service
+                    process_stock_movement(
+                        batch_id=batch.id,
+                        quantity=qty,
+                        doc_type='SalesReturn',
+                        doc_id=sales_return.id
+                    )
+                    print(f"DEBUG: Updated batch stock via ledger")
                     
                     grand_total += price * qty
                     
@@ -1401,27 +1459,8 @@ def delete_sales_return(request, pk):
     sales_return = get_object_or_404(SalesReturn, pk=pk)
     try:
         with transaction.atomic():
-            # 1. Reverse Inventory Impact (Stock Deduction)
-            # When return was created: Stock += Qty
-            # Now deleting return: Stock -= Qty
-            for item in sales_return.items.all():
-                batch = item.batch
-                # Ensure we don't go negative if stock was already consumed (Edge case)
-                # But physically, if we undo a return, the stock should leave.
-                batch.current_quantity -= item.quantity
-                batch.save()
-            
-            # 2. Reverse Financial Impact (Wallet Debit)
-            # When return was created: Wallet += Amount (Credit)
-            # Now deleting return: Deleting the payment entry will trigger the signal to reverse it.
-            # Signal: post_delete on CustomerPayment -> if WALLET_CREDIT -> Wallet -= Amount.
-            if hasattr(sales_return, 'payment_entry') and sales_return.payment_entry:
-                sales_return.payment_entry.delete()
-                
-            # 3. Delete the Return Record
-            sales_return.delete()
-            
-            messages.success(request, "Sales return deleted successfully. Stock deducted and wallet reversed.")
+            sales_return.cancel()
+            messages.success(request, "Sales return cancelled successfully. Stock deducted and wallet reversed.")
             return redirect('returns_list')
             
     except Exception as e:
@@ -1473,20 +1512,23 @@ def create_purchase_return(request):
                     
                     batch = Batch.objects.get(id=batch_id)
                     
-                    # Validation: Cannot return more than we have
-                    if qty > batch.current_quantity:
-                        raise ValidationError(f"Cannot return {qty} of {batch}. Only {batch.current_quantity} in stock.")
-                    
-                    # Deduct Stock
-                    batch.current_quantity -= qty
-                    batch.save()
-                    
                     PurchaseReturnItem.objects.create(
                         return_invoice=purchase_return,
                         batch=batch,
                         quantity=qty,
                         refund_price=price
                     )
+                    
+                    # Deduct stock via ledger (outward — returning to supplier)
+                    try:
+                        process_stock_movement(
+                            batch_id=batch.id,
+                            quantity=-qty,
+                            doc_type='PurchaseReturn',
+                            doc_id=purchase_return.id
+                        )
+                    except InsufficientStockError as e:
+                        raise ValidationError(f"Cannot return {qty} of {batch}. {str(e)}")
                     
                     grand_total += (price * qty)
                 
@@ -1510,6 +1552,7 @@ def create_purchase_return(request):
             messages.error(request, f"Error creating return: {e.message}")
             return redirect('create_purchase_return')
         except Exception as e:
+            import traceback; traceback.print_exc()
             messages.error(request, f"Error creating return: {str(e)}")
             return redirect('create_purchase_return')
 
@@ -1528,22 +1571,8 @@ def delete_purchase_return(request, pk):
     
     try:
         with transaction.atomic():
-            # 1. Reverse Inventory (Stock Restoration)
-            # When created: Stock decreased.
-            # Now deleting: Stock must increase.
-            for item in purchase_return.items.all():
-                batch = item.batch
-                batch.current_quantity += item.quantity
-                batch.save()
-            
-            # 2. Reverse Finance (Delete Debit Note)
-            if hasattr(purchase_return, 'payment_entry') and purchase_return.payment_entry:
-                purchase_return.payment_entry.delete()
-                
-            # 3. Delete Record
-            purchase_return.delete()
-            
-            messages.success(request, "Supplier return deleted. Stock restored and debit note removed.")
+            purchase_return.cancel()
+            messages.success(request, "Supplier return cancelled. Stock restored and debit note removed.")
             return redirect('returns_list')
             
     except Exception as e:
@@ -1681,7 +1710,7 @@ def customer_ledger(request):
     # Prefetch only UNPAID/PARTIAL invoices
     unpaid_invoices_pref = Prefetch(
         'salesinvoice_set',
-        queryset=SalesInvoice.objects.filter(payment_status__in=['UNPAID', 'PARTIAL']).order_by('date'),
+        queryset=SalesInvoice.objects.filter(payment_status__in=['UNPAID', 'PARTIAL'], status='ACTIVE').order_by('date'),
         to_attr='unpaid_invoices'
     )
 
@@ -1903,7 +1932,8 @@ def customer_statement_view(request, pk):
     # total_due = Sum of balance_due from UNPAID/PARTIAL invoices
     total_due = SalesInvoice.objects.filter(
         customer=customer,
-        payment_status__in=['UNPAID', 'PARTIAL']
+        payment_status__in=['UNPAID', 'PARTIAL'],
+        status='ACTIVE'
     ).aggregate(total=Sum('balance_due'))['total'] or Decimal('0')
     
     net_balance = customer.wallet_balance - total_due

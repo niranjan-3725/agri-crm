@@ -1,0 +1,68 @@
+Creating test database for alias 'default' ('test_agri_crm_db')...
+
+test_edit_cancelled_purchase_is_blocked (transactions.test_legacy_tests.AmendLifecycleTests.test_edit_cancelled_purchase_is_blocked)
+Editing a CANCELLED purchase invoice must redirect with error. ... ok
+test_edit_cancelled_sale_is_blocked (transactions.test_legacy_tests.AmendLifecycleTests.test_edit_cancelled_sale_is_blocked)
+Editing a CANCELLED sales invoice must redirect with error. ... ok
+test_edit_purchase_creates_two_invoices (transactions.test_legacy_tests.AmendLifecycleTests.test_edit_purchase_creates_two_invoices)
+Editing an active purchase must cancel the old and create a new ACTIVE invoice. ... ok
+test_edit_sale_creates_two_invoices (transactions.test_legacy_tests.AmendLifecycleTests.test_edit_sale_creates_two_invoices)
+Editing an active sale must cancel the old and create a new ACTIVE invoice. ... FAIL
+test_double_cancel_raises (transactions.test_legacy_tests.ImmutableDocumentTests.test_double_cancel_raises)
+Calling cancel() twice must raise ValidationError. ... ok
+test_purchase_invoice_cancel_creates_ledger_and_marks_cancelled (transactions.test_legacy_tests.ImmutableDocumentTests.test_purchase_invoice_cancel_creates_ledger_and_marks_cancelled)
+cancel() must reverse stock, create StockMovement, and set status=CANCELLED. ... ok
+test_purchase_invoice_delete_raises (transactions.test_legacy_tests.ImmutableDocumentTests.test_purchase_invoice_delete_raises)
+Calling .delete() on PurchaseInvoice must raise ValidationError. ... ok
+test_sales_invoice_cancel_creates_ledger_and_marks_cancelled (transactions.test_legacy_tests.ImmutableDocumentTests.test_sales_invoice_cancel_creates_ledger_and_marks_cancelled)
+cancel() must reverse stock, create StockMovement, and set status=CANCELLED. ... ok
+test_sales_invoice_delete_raises (transactions.test_legacy_tests.ImmutableDocumentTests.test_sales_invoice_delete_raises)
+Calling .delete() on SalesInvoice must raise ValidationError. ... ok
+test_sales_list_excludes_cancelled (transactions.test_legacy_tests.ImmutableDocumentTests.test_sales_list_excludes_cancelled)
+The sales_list view must not show CANCELLED invoices. ... ok
+test_create_purchase_creates_ledger_entry_and_updates_batch (transactions.test_legacy_tests.InwardFlowLedgerTests.test_create_purchase_creates_ledger_entry_and_updates_batch)
+Gap 4 fix: create_purchase must create a + StockMovement and update Batch qty. ... ok
+test_purchase_delete_creates_negative_ledger_and_reverses_stock (transactions.test_legacy_tests.InwardFlowLedgerTests.test_purchase_delete_creates_negative_ledger_and_reverses_stock)
+Gap 3 fix: purchase_delete must create a - StockMovement and deduct stock. ... ok
+test_invoice_deletion_restoration (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_invoice_deletion_restoration)
+Test Invoice Deletion Restoration: Deleting a valid invoice restores stock via ledger. ... ok
+test_negative_stock_block_on_sale (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_negative_stock_block_on_sale)
+Test Negative Stock Block: Try to sell 50 units. Assert transaction rollback. ... ok
+test_sale_deduction_bug_1_fix (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_sale_deduction_bug_1_fix)
+Test Sale Deduction (Bug #1 Fix): Assert StockMovement is created & Batch decreases. ... ok
+test_sale_return_addition (transactions.test_legacy_tests.OutwardFlowLedgerTests.test_sale_return_addition)
+Test Sale Return Addition: Return units, check StockMovement and batch quantity. ... ok
+test_context_data (transactions.test_legacy_tests.PurchaseCreateViewTest.test_context_data) ... ok
+test_payment_status_logic (transactions.test_legacy_tests.PurchaseCreateViewTest.test_payment_status_logic) ... ok
+test_purchase_create_template (transactions.test_legacy_tests.PurchaseCreateViewTest.test_purchase_create_template) ... ok
+test_purchase_create_view_status_code (transactions.test_legacy_tests.PurchaseCreateViewTest.test_purchase_create_view_status_code) ... ok
+test_valid_submission (transactions.test_legacy_tests.PurchaseCreateViewTest.test_valid_submission) ... FAIL
+test_edit_page_loads_data (transactions.test_legacy_tests.PurchaseEditViewTest.test_edit_page_loads_data) ... ok
+test_edit_page_saves_changes (transactions.test_legacy_tests.PurchaseEditViewTest.test_edit_page_saves_changes)
+Sprint 4: Editing creates a new amended invoice and cancels the original. ... ok
+test_two_items_same_batch_deducts_correctly (transactions.test_legacy_tests.StaleStateSaleFixTests.test_two_items_same_batch_deducts_correctly)
+If two line items reference the same batch (qty=7 + qty=5), total deduction ... ok
+
+======================================================================
+FAIL: test_edit_sale_creates_two_invoices (transactions.test_legacy_tests.AmendLifecycleTests.test_edit_sale_creates_two_invoices)
+Editing an active sale must cancel the old and create a new ACTIVE invoice.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\agri_crm\transactions\test_legacy_tests.py", line 722, in test_edit_sale_creates_two_invoices
+    self.assertEqual(response.status_code, 302)
+AssertionError: 200 != 302
+
+======================================================================
+FAIL: test_valid_submission (transactions.test_legacy_tests.PurchaseCreateViewTest.test_valid_submission)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\agri_crm\transactions\test_legacy_tests.py", line 72, in test_valid_submission
+    self.assertEqual(invoice.loading_charges, 50.00)
+AssertionError: Decimal('10.00') != 50.0
+
+----------------------------------------------------------------------
+Ran 24 tests in 1.412s
+
+FAILED (failures=2)
+Destroying test database for alias 'default' ('test_agri_crm_db')...
+

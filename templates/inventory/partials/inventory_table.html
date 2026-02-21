@@ -1,89 +1,140 @@
-<div class="overflow-x-auto shadow-md rounded-lg mb-8">
-    <table class="min-w-full text-sm text-left text-gray-500">
-        <thead class="text-xs text-gray-700 uppercase bg-slate-100">
-            <tr>
-                <th scope="col" class="px-6 py-3">Product</th>
-                <th scope="col" class="px-6 py-3">Category</th>
-                <th scope="col" class="px-6 py-3">Expiry</th>
-                <th scope="col" class="px-6 py-3">MRP / Sell Price</th>
-                <th scope="col" class="px-6 py-3">Stock Qty</th>
-                <th scope="col" class="px-6 py-3">Value</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for batch in batches %}
-            <tr class="bg-white border-b hover:bg-gray-50">
-                <td class="px-6 py-4">
-                    <div class="font-bold text-gray-900">{{ batch.product.name }}</div>
-                    <div class="text-xs text-gray-500">Batch: {{ batch.batch_number }}</div>
-                </td>
-                <td class="px-6 py-4">
-                    {{ batch.product.category.name|default:"-" }}
-                </td>
-                <td class="px-6 py-4">
-                    {% if batch.expiry_date < today %} <span class="text-red-600 font-bold flex items-center">
-                        {{ batch.expiry_date }} (Expired)
-                        </span>
-                        {% elif batch.days_to_expiry <= 30 %} <span class="text-orange-600 font-bold">
-                            {{ batch.expiry_date }}
-                            </span>
-                            {% else %}
-                            <span class="text-green-600">
-                                {{ batch.expiry_date }}
-                            </span>
-                            {% endif %}
-                </td>
-                <td class="px-6 py-4">
-                    <div>MRP: ₹{{ batch.mrp }}</div>
-                    <div class="text-xs text-blue-600 font-bold">Sell: ₹{{ batch.base_selling_price }}</div>
-                </td>
-                <td class="px-6 py-4">
-                    {% if batch.current_quantity == 0 %}
-                    <span class="bg-gray-200 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">Out of
-                        Stock</span>
-                    {% elif batch.current_quantity < 10 %} <span
-                        class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">{{
-                        batch.current_quantity }} (Low)</span>
-                        {% else %}
-                        <span class="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">{{
-                            batch.current_quantity }}</span>
-                        {% endif %}
-                </td>
-                <td class="px-6 py-4 font-bold text-slate-700">
-                    ₹{{ batch.stock_value }}
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="6" class="px-6 py-4 text-center">No stock found.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{% load humanize %}
 
-    <!-- Pagination -->
-    <div class="px-6 py-4 bg-white border-t border-gray-200 flex items-center justify-between">
-        <span class="text-sm text-gray-700">
-            Showing <span class="font-bold">{{ batches.start_index }}</span> to <span class="font-bold">{{
-                batches.end_index }}</span> of <span class="font-bold">{{ batches.paginator.count }}</span> results
-        </span>
-        <div class="inline-flex mt-2 xs:mt-0">
-            {% if batches.has_previous %}
-            <button
-                hx-get="{% url 'inventory_list' %}?page={{ batches.previous_page_number }}&q={{ q }}&status={{ status }}"
-                hx-target="#inventory-table" hx-push-url="true"
-                class="px-4 py-2 text-sm font-medium text-white bg-slate-800 rounded-l hover:bg-slate-900">
-                Prev
-            </button>
-            {% endif %}
-            {% if batches.has_next %}
-            <button
-                hx-get="{% url 'inventory_list' %}?page={{ batches.next_page_number }}&q={{ q }}&status={{ status }}"
-                hx-target="#inventory-table" hx-push-url="true"
-                class="px-4 py-2 text-sm font-medium text-white bg-slate-800 rounded-r border-0 border-l border-slate-700 hover:bg-slate-900">
-                Next
-            </button>
-            {% endif %}
+<div class="space-y-4">
+    {% for batch in batches %}
+    <div class="group bg-white rounded-2xl p-5 border border-gray-100
+                hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5
+                transition-all duration-200 flex flex-col md:flex-row items-start md:items-center gap-5">
+
+        <!-- ── Product Info ── -->
+        <div class="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-4 gap-4 items-center w-full">
+
+            <!-- Col 1: Product Name + Batch + Category -->
+            <div class="col-span-2 md:col-span-1">
+                <div class="font-bold text-gray-900 text-base">{{ batch.product.name }}</div>
+                <div class="text-xs text-gray-400 font-medium mt-0.5">Batch: {{ batch.batch_number }}</div>
+                <span
+                    class="inline-block mt-1.5 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold uppercase tracking-wide">
+                    {{ batch.product.category.name|default:"Uncategorised" }}
+                </span>
+            </div>
+
+            <!-- Col 2: Expiry Date -->
+            <div class="col-span-1">
+                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Expiry</div>
+                {% if not batch.expiry_date %}
+                <span
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-50 text-gray-500 border border-gray-100">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
+                    No Expiry
+                </span>
+                {% elif batch.expiry_date < today %} <span
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-100">
+                    <span class="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
+                    {{ batch.expiry_date|date:"d M Y" }}
+                    </span>
+                    <div class="text-[10px] text-red-400 font-bold mt-1">Expired</div>
+                    {% elif batch.days_to_expiry <= 30 %} <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                        {{ batch.expiry_date|date:"d M Y" }}
+                        </span>
+                        <div class="text-[10px] text-amber-500 font-bold mt-1">{{ batch.days_to_expiry }}d remaining
+                        </div>
+                        {% else %}
+                        <span
+                            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
+                            <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+                            {{ batch.expiry_date|date:"d M Y" }}
+                        </span>
+                        {% endif %}
+            </div>
+
+            <!-- Col 3: Pricing -->
+            <div class="col-span-1">
+                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Price</div>
+                <div class="text-sm font-bold text-gray-800">₹{{ batch.mrp|intcomma }}</div>
+                <div class="text-xs text-blue-600 font-bold mt-0.5">Sell ₹{{ batch.base_selling_price|intcomma }}</div>
+            </div>
+
+            <!-- Col 4: Stock Qty + Value -->
+            <div class="col-span-1">
+                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Stock</div>
+                {% if batch.current_quantity == 0 %}
+                <span
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
+                    Out of Stock
+                </span>
+                {% elif batch.current_quantity < 10 %} <span
+                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                    {{ batch.current_quantity }} (Low)
+                    </span>
+                    {% else %}
+                    <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+                        {{ batch.current_quantity }} units
+                    </span>
+                    {% endif %}
+                    <div class="text-sm font-bold text-slate-700 mt-1.5">₹{{ batch.stock_value|intcomma }}</div>
+                    <div class="text-[10px] text-gray-400 font-medium">stock value</div>
+            </div>
+
         </div>
+
+    </div>
+    {% empty %}
+    <div class="text-center py-20 bg-white rounded-[2.5rem] border-2 border-dashed border-gray-100">
+        <div class="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            </svg>
+        </div>
+        <h3 class="text-lg font-bold text-gray-900">No Stock Found</h3>
+        <p class="text-gray-400 max-w-sm mx-auto mt-1 text-sm">
+            {% if status == 'low' %}No batches are currently running low on stock.
+            {% elif status == 'expired' %}No expired batches found.
+            {% elif status == 'out' %}No batches are completely out of stock.
+            {% else %}No inventory records match your search.{% endif %}
+        </p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- ── Pagination ────────────────────────────────────────────── -->
+{% if batches.has_other_pages %}
+<div class="flex items-center justify-between mt-6 bg-white rounded-2xl border border-gray-100 px-6 py-4">
+    <span class="text-sm text-gray-500 font-medium">
+        Showing <span class="font-bold text-gray-900">{{ batches.start_index }}</span>–<span
+            class="font-bold text-gray-900">{{ batches.end_index }}</span>
+        of <span class="font-bold text-gray-900">{{ batches.paginator.count }}</span> batches
+    </span>
+    <div class="flex items-center gap-2">
+        {% if batches.has_previous %}
+        <button
+            hx-get="{% url 'inventory_list' %}?page={{ batches.previous_page_number }}&q={{ q|default:'' }}&status={{ status|default:'' }}"
+            hx-target="#inventory-table" hx-push-url="true"
+            class="px-4 py-2 text-sm font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M15 18l-6-6 6-6" />
+            </svg>
+            Prev
+        </button>
+        {% endif %}
+        {% if batches.has_next %}
+        <button
+            hx-get="{% url 'inventory_list' %}?page={{ batches.next_page_number }}&q={{ q|default:'' }}&status={{ status|default:'' }}"
+            hx-target="#inventory-table" hx-push-url="true"
+            class="px-4 py-2 text-sm font-bold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors flex items-center gap-1.5">
+            Next
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6" />
+            </svg>
+        </button>
+        {% endif %}
     </div>
 </div>
+{% endif %}

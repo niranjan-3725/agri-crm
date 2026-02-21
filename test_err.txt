@@ -1,0 +1,17 @@
+Creating test database for alias 'default'...
+
+..........F...
+======================================================================
+FAIL: test_valid_submission (transactions.test_legacy_tests.PurchaseCreateViewTest.test_valid_submission)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\agri_crm\transactions\test_legacy_tests.py", line 72, in test_valid_submission
+    self.assertEqual(invoice.loading_charges, 50.00)
+AssertionError: Decimal('10.00') != 50.0
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.784s
+
+FAILED (failures=1)
+Destroying test database for alias 'default'...
+

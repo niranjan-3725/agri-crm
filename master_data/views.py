@@ -125,7 +125,7 @@ class SupplierListView(ListView):
         context['total_suppliers'] = Supplier.objects.count()
         
         # Total Payables (from Transactions)
-        total_payables = PurchaseInvoice.objects.aggregate(total=Sum('balance_due'))['total'] or 0
+        total_payables = PurchaseInvoice.objects.filter(status='ACTIVE').aggregate(total=Sum('balance_due'))['total'] or 0
         context['total_payables'] = total_payables
         
         # Top Distributors

@@ -1,10 +1,16 @@
 from decimal import Decimal
 from datetime import timedelta
-from django.db import models
+from django.db import models, transaction
+from django.core.exceptions import ValidationError
 
 from django.utils import timezone
 from master_data.models import Supplier, Customer
 from inventory.models import Batch
+
+INVOICE_STATUS_CHOICES = [
+    ('ACTIVE', 'Active'),
+    ('CANCELLED', 'Cancelled'),
+]
 
 def generate_invoice_number():
     return f"INV-{timezone.now().strftime('%Y%m%d%H%M%S')}"
@@ -34,6 +40,15 @@ class PurchaseInvoice(models.Model):
     
     file = models.FileField(upload_to='purchase_invoices/', blank=True, null=True)
 
+    # Sprint 3: Immutable Document Lifecycle
+    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+
+    # Sprint 4: Amend Lifecycle — links amended doc back to cancalled original
+    amended_from = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='amendments'
+    )
+
     def save(self, *args, **kwargs):
         # Sprint 23: Auto Due Date
         if not self.due_date and self.date:
@@ -61,6 +76,32 @@ class PurchaseInvoice(models.Model):
             self.payment_status = 'PARTIAL'
             
         super().save(*args, **kwargs)
+
+    def cancel(self):
+        """Atomically cancel this invoice: reverse stock, mark CANCELLED.
+        Does NOT delete any records — all data is preserved for audit."""
+        from inventory.services import process_stock_movement
+        if self.status == 'CANCELLED':
+            raise ValidationError("This invoice is already cancelled.")
+
+        with transaction.atomic():
+            # 1. Reverse stock for every line item (outward = negative)
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=-item.quantity,
+                    doc_type='PurchaseInvoiceCancel',
+                    doc_id=self.id,
+                )
+            # 2. Mark cancelled and persist
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Submitted invoices cannot be hard-deleted. "
+            "Use .cancel() to reverse stock and mark as cancelled."
+        )
 
     def __str__(self):
         return f"Purchase {self.invoice_number} from {self.supplier}"
@@ -135,6 +176,15 @@ class SalesInvoice(models.Model):
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_date = models.DateField(null=True, blank=True)
 
+    # Sprint 3: Immutable Document Lifecycle
+    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+
+    # Sprint 4: Amend Lifecycle — links amended doc back to cancelled original
+    amended_from = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='amendments'
+    )
+
     @property
     def total_tax(self):
         """Returns the sum of CGST and SGST as total tax."""
@@ -162,6 +212,37 @@ class SalesInvoice(models.Model):
 
         super().save(*args, **kwargs)
         return f"Sales {self.invoice_number} to {self.customer}"
+
+    def cancel(self):
+        """Atomically cancel this invoice: reverse stock, refund wallet, mark CANCELLED.
+        Does NOT delete any records — all data is preserved for audit."""
+        from inventory.services import process_stock_movement
+        if self.status == 'CANCELLED':
+            raise ValidationError("This invoice is already cancelled.")
+
+        with transaction.atomic():
+            # 1. Reverse stock for every line item (inward = positive, restoring stock)
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='SalesInvoiceCancel',
+                    doc_id=self.id,
+                )
+            # 2. Refund wallet payments (only positive-amount WALLET entries)
+            for payment in self.payments.filter(amount__gt=0, payment_mode='WALLET'):
+                if self.customer:
+                    self.customer.wallet_balance += payment.amount
+                    self.customer.save()
+            # 3. Mark cancelled and persist
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Submitted invoices cannot be hard-deleted. "
+            "Use .cancel() to reverse stock and mark as cancelled."
+        )
 
 class SalesItem(models.Model):
     invoice = models.ForeignKey(SalesInvoice, related_name='items', on_delete=models.CASCADE)
@@ -198,6 +279,40 @@ class PurchaseReturn(models.Model):
     date = models.DateField()
     reason = models.CharField(max_length=255)
     total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+
+    def cancel(self):
+        from inventory.services import process_stock_movement
+        from django.core.exceptions import ValidationError
+        from django.db import transaction
+        if self.status == 'CANCELLED':
+            raise ValidationError("This return is already cancelled.")
+
+        with transaction.atomic():
+            # 1. Reverse Inventory Impact via Ledger Service
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='PurchaseReturnCancel',
+                    doc_id=self.id
+                )
+            
+            # 2. Reverse Financial Impact
+            if hasattr(self, 'payment_entry') and self.payment_entry:
+                self.payment_entry.delete()
+                
+            # 3. Mark cancelled
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        raise ValidationError(
+            "Submitted returns cannot be hard-deleted. "
+            "Use .cancel() to reverse stock and mark as cancelled."
+        )
 
     def __str__(self):
         return f"Return to {self.supplier} on {self.date}"
@@ -265,6 +380,43 @@ class SalesReturn(models.Model):
     original_sale = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, null=True, blank=True)
     date = models.DateField()
     refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+
+    def cancel(self):
+        from inventory.services import process_stock_movement, InsufficientStockError
+        from django.core.exceptions import ValidationError
+        from django.db import transaction
+        if self.status == 'CANCELLED':
+            raise ValidationError("This return is already cancelled.")
+
+        with transaction.atomic():
+            # 1. Reverse Inventory Impact
+            for item in self.items.all():
+                try:
+                    process_stock_movement(
+                        batch_id=item.batch.id,
+                        quantity=-item.quantity,
+                        doc_type='SalesReturnCancel',
+                        doc_id=self.id
+                    )
+                except InsufficientStockError as e:
+                    raise ValidationError(f"Cannot revert return. Removing this return stock drops actual stock below zero: {str(e)}")
+            
+            # 2. Reverse Financial Impact
+            if hasattr(self, 'payment_entry') and self.payment_entry:
+                self.payment_entry.delete()
+                
+            # 3. Mark cancelled
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        raise ValidationError(
+            "Submitted returns cannot be hard-deleted. "
+            "Use .cancel() to reverse stock and mark as cancelled."
+        )
 
     def __str__(self):
         return f"Return from {self.original_sale} on {self.date}"
