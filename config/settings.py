@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'master_data',
     'inventory',
     'transactions',
+    'accounting',
 ]
 
 MIDDLEWARE = [

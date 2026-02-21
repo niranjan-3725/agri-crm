@@ -24,6 +24,14 @@ class SalesPaymentTest(TestCase):
             base_selling_price=100, # Base Price
             mrp=120
         )
+        # Sprint 8: Seed StockBin for warehouse-aware ledger
+        from inventory.models import StockBin
+        from inventory.services import get_default_warehouse
+        wh = get_default_warehouse()
+        StockBin.objects.get_or_create(
+            warehouse=wh, batch=self.batch,
+            defaults={'actual_qty': self.batch.current_quantity},
+        )
         
     def test_create_sale_paid_triggers_payment_and_signal(self):
         """

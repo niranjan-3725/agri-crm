@@ -42,4 +42,9 @@ urlpatterns = [
     path('create-supplier/', views.create_supplier, name='create_supplier'),
     path('create-product/', views.create_product, name='create_product'),
     path('customer/<int:pk>/statement/', views.customer_statement_view, name='customer_statement'),
+    # Sprint 11: Submit actions
+    path('sales/<int:pk>/submit/', views.submit_sales_invoice, name='submit_sales_invoice'),
+    path('purchases/<int:pk>/submit/', views.submit_purchase_invoice, name='submit_purchase_invoice'),
+    path('returns/sales/<int:pk>/submit/', views.submit_sales_return, name='submit_sales_return'),
+    path('returns/purchase/<int:pk>/submit/', views.submit_purchase_return, name='submit_purchase_return'),
 ]

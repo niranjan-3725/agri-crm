@@ -7,15 +7,391 @@ from django.utils import timezone
 from master_data.models import Supplier, Customer
 from inventory.models import Batch
 
-INVOICE_STATUS_CHOICES = [
-    ('ACTIVE', 'Active'),
+# Sprint 11: ERP Document State Machine
+DOCUMENT_STATUS_CHOICES = [
+    ('DRAFT', 'Draft'),
+    ('SUBMITTED', 'Submitted'),
     ('CANCELLED', 'Cancelled'),
 ]
 
 def generate_invoice_number():
     return f"INV-{timezone.now().strftime('%Y%m%d%H%M%S')}"
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Part O: Order Pipeline (Sprint 14)
+# ═══════════════════════════════════════════════════════════════════════
+
+class Quotation(models.Model):
+    """Sprint 14: Sales quotation / estimate.
+
+    A non-binding price quote to a customer. Can be converted into
+    a SalesOrder.  Has NO impact on stock or GL ledgers.
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True)
+    date = models.DateField(default=timezone.now)
+    valid_until = models.DateField(null=True, blank=True)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    def submit(self):
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+        self.status = 'SUBMITTED'
+        self.save()
+
+    def cancel(self):
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+        self.status = 'CANCELLED'
+        self.save()
+
+    def delete(self, *args, **kwargs):
+        if self.status != 'DRAFT':
+            raise ValidationError("Submitted documents cannot be deleted.")
+        models.Model.delete(self, *args, **kwargs)
+
+    def __str__(self):
+        return f"Quotation #{self.pk} for {self.customer}"
+
+
+class QuotationItem(models.Model):
+    quotation = models.ForeignKey(Quotation, related_name='items', on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
+    quantity = models.IntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.batch} in QTN#{self.quotation_id}"
+
+
+class SalesOrder(models.Model):
+    """Sprint 14: Confirmed sales order from a customer.
+
+    Tracks fulfillment progress through delivered_qty and billed_qty
+    on its line items.  Has NO impact on stock or GL ledgers.
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True)
+    date = models.DateField(default=timezone.now)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    # Link back to the quotation this order was created from
+    quotation = models.ForeignKey(
+        Quotation, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales_orders'
+    )
+
+    @property
+    def per_delivered(self):
+        """Percentage of ordered qty that has been delivered."""
+        items = self.items.all()
+        if not items:
+            return 0
+        total_ordered = sum(i.quantity for i in items)
+        total_delivered = sum(i.delivered_qty for i in items)
+        if total_ordered == 0:
+            return 0
+        return round((total_delivered / total_ordered) * 100, 1)
+
+    @property
+    def per_billed(self):
+        """Percentage of ordered qty that has been billed."""
+        items = self.items.all()
+        if not items:
+            return 0
+        total_ordered = sum(i.quantity for i in items)
+        total_billed = sum(i.billed_qty for i in items)
+        if total_ordered == 0:
+            return 0
+        return round((total_billed / total_ordered) * 100, 1)
+
+    def submit(self):
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+        self.status = 'SUBMITTED'
+        self.save()
+
+    def cancel(self):
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+        self.status = 'CANCELLED'
+        self.save()
+
+    def delete(self, *args, **kwargs):
+        if self.status != 'DRAFT':
+            raise ValidationError("Submitted documents cannot be deleted.")
+        models.Model.delete(self, *args, **kwargs)
+
+    def __str__(self):
+        return f"Sales Order #{self.pk} for {self.customer}"
+
+
+class SalesOrderItem(models.Model):
+    sales_order = models.ForeignKey(SalesOrder, related_name='items', on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
+    quantity = models.IntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # Sprint 14: Fulfillment tracking
+    delivered_qty = models.IntegerField(default=0)
+    billed_qty = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.batch} in SO#{self.sales_order_id}"
+
+
+class PurchaseOrder(models.Model):
+    """Sprint 14: Purchase order to a supplier.
+
+    Tracks fulfillment progress through received_qty and billed_qty
+    on its line items.  Has NO impact on stock or GL ledgers.
+    """
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    date = models.DateField(default=timezone.now)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    @property
+    def per_received(self):
+        """Percentage of ordered qty that has been received."""
+        items = self.items.all()
+        if not items:
+            return 0
+        total_ordered = sum(i.quantity for i in items)
+        total_received = sum(i.received_qty for i in items)
+        if total_ordered == 0:
+            return 0
+        return round((total_received / total_ordered) * 100, 1)
+
+    @property
+    def per_billed(self):
+        """Percentage of ordered qty that has been billed."""
+        items = self.items.all()
+        if not items:
+            return 0
+        total_ordered = sum(i.quantity for i in items)
+        total_billed = sum(i.billed_qty for i in items)
+        if total_ordered == 0:
+            return 0
+        return round((total_billed / total_ordered) * 100, 1)
+
+    def submit(self):
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+        self.status = 'SUBMITTED'
+        self.save()
+
+    def cancel(self):
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+        self.status = 'CANCELLED'
+        self.save()
+
+    def delete(self, *args, **kwargs):
+        if self.status != 'DRAFT':
+            raise ValidationError("Submitted documents cannot be deleted.")
+        models.Model.delete(self, *args, **kwargs)
+
+    def __str__(self):
+        return f"Purchase Order #{self.pk} for {self.supplier}"
+
+
+class PurchaseOrderItem(models.Model):
+    purchase_order = models.ForeignKey(PurchaseOrder, related_name='items', on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
+    quantity = models.IntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # Sprint 14: Fulfillment tracking
+    received_qty = models.IntegerField(default=0)
+    billed_qty = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.batch} in PO#{self.purchase_order_id}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Part F: Fulfillment Documents (Sprint 13)
+# ═══════════════════════════════════════════════════════════════════════
+
+class PurchaseReceipt(models.Model):
+    """Sprint 13: Inward stock fulfillment document.
+
+    Records physical receipt of goods.  Stock levels and the
+    Inventory-vs-SRNB GL pair are updated ONLY when this document
+    is submitted — never by PurchaseInvoice directly.
+    """
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    # Sprint 14: Link to purchase order
+    purchase_order = models.ForeignKey(
+        PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='purchase_receipts'
+    )
+
+    def submit(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='PurchaseReceipt',
+                    doc_id=self.id,
+                )
+                # Sprint 14: Update PO item received_qty
+                if item.purchase_order_item:
+                    item.purchase_order_item.received_qty += item.quantity
+                    item.purchase_order_item.save(update_fields=['received_qty'])
+
+            self.status = 'SUBMITTED'
+            self.save()
+
+    def cancel(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=-item.quantity,
+                    doc_type='PurchaseReceiptCancel',
+                    doc_id=self.id,
+                )
+                # Sprint 14: Reverse PO item received_qty
+                if item.purchase_order_item:
+                    item.purchase_order_item.received_qty -= item.quantity
+                    item.purchase_order_item.save(update_fields=['received_qty'])
+
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted documents cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
+
+    def __str__(self):
+        return f"Purchase Receipt #{self.pk} from {self.supplier}"
+
+
+class PurchaseReceiptItem(models.Model):
+    receipt = models.ForeignKey(PurchaseReceipt, related_name='items', on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
+    quantity = models.IntegerField()
+
+    # Sprint 14: Link to specific purchase order line item
+    purchase_order_item = models.ForeignKey(
+        PurchaseOrderItem, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='receipt_items'
+    )
+
+    def __str__(self):
+        return f"{self.quantity} x {self.batch} in PR#{self.receipt_id}"
+
+
+class DeliveryNote(models.Model):
+    """Sprint 13: Outward stock fulfillment document.
+
+    Records physical dispatch of goods.  Stock levels and the
+    COGS-vs-Inventory GL pair are updated ONLY when this document
+    is submitted — never by SalesInvoice directly.
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True)
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    # Sprint 14: Link to sales order
+    sales_order = models.ForeignKey(
+        SalesOrder, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='delivery_notes'
+    )
+
+    def submit(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=-item.quantity,
+                    doc_type='DeliveryNote',
+                    doc_id=self.id,
+                )
+                # Sprint 14: Update SO item delivered_qty
+                if item.sales_order_item:
+                    item.sales_order_item.delivered_qty += item.quantity
+                    item.sales_order_item.save(update_fields=['delivered_qty'])
+
+            self.status = 'SUBMITTED'
+            self.save()
+
+    def cancel(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='DeliveryNoteCancel',
+                    doc_id=self.id,
+                )
+                # Sprint 14: Reverse SO item delivered_qty
+                if item.sales_order_item:
+                    item.sales_order_item.delivered_qty -= item.quantity
+                    item.sales_order_item.save(update_fields=['delivered_qty'])
+
+            self.status = 'CANCELLED'
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted documents cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
+
+    def __str__(self):
+        return f"Delivery Note #{self.pk} for {self.customer}"
+
+
+class DeliveryNoteItem(models.Model):
+    delivery_note = models.ForeignKey(DeliveryNote, related_name='items', on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
+    quantity = models.IntegerField()
+
+    # Sprint 14: Link to specific sales order line item
+    sales_order_item = models.ForeignKey(
+        SalesOrderItem, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='delivery_note_items'
+    )
+
+    def __str__(self):
+        return f"{self.quantity} x {self.batch} in DN#{self.delivery_note_id}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Part A: Purchase (Inward)
+# ═══════════════════════════════════════════════════════════════════════
+
 class PurchaseInvoice(models.Model):
     PAYMENT_STATUS_CHOICES = [
         ('UNPAID', 'Unpaid'),
@@ -41,18 +417,29 @@ class PurchaseInvoice(models.Model):
     file = models.FileField(upload_to='purchase_invoices/', blank=True, null=True)
 
     # Sprint 3: Immutable Document Lifecycle
-    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
 
-    # Sprint 4: Amend Lifecycle — links amended doc back to cancalled original
+    # Sprint 4: Amend Lifecycle
     amended_from = models.ForeignKey(
         'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='amendments'
     )
 
+    # Sprint 13: Link to fulfillment document
+    purchase_receipt = models.ForeignKey(
+        PurchaseReceipt, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoices'
+    )
+
+    # Sprint 14: Link to purchase order
+    purchase_order = models.ForeignKey(
+        PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='purchase_invoices'
+    )
+
     def save(self, *args, **kwargs):
         # Sprint 23: Auto Due Date
         if not self.due_date and self.date:
-            # Ensure date is a date object, not a string
             from datetime import date as date_type
             if isinstance(self.date, str):
                 from datetime import datetime
@@ -66,10 +453,9 @@ class PurchaseInvoice(models.Model):
         self.total_amount = Decimal(str(self.total_amount))
         self.balance_due = self.total_amount - self.amount_paid
         
-        # Determine status based on balance
         if self.balance_due <= 0:
             self.payment_status = 'PAID'
-            self.balance_due = 0 # Ensure no negative balance
+            self.balance_due = 0
         elif self.balance_due == self.total_amount and self.total_amount > 0:
             self.payment_status = 'UNPAID'
         else:
@@ -77,31 +463,73 @@ class PurchaseInvoice(models.Model):
             
         super().save(*args, **kwargs)
 
-    def cancel(self):
-        """Atomically cancel this invoice: reverse stock, mark CANCELLED.
-        Does NOT delete any records — all data is preserved for audit."""
-        from inventory.services import process_stock_movement
-        if self.status == 'CANCELLED':
-            raise ValidationError("This invoice is already cancelled.")
+    def submit(self):
+        """Sprint 13: Transition DRAFT → SUBMITTED.
+
+        Auto-creates and submits a PurchaseReceipt (stock movement)
+        if one is not already linked, then posts AP GL entries.
+        """
+        from accounting.services import post_purchase_invoice_gl
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
 
         with transaction.atomic():
-            # 1. Reverse stock for every line item (outward = negative)
-            for item in self.items.all():
-                process_stock_movement(
-                    batch_id=item.batch.id,
-                    quantity=-item.quantity,
-                    doc_type='PurchaseInvoiceCancel',
-                    doc_id=self.id,
+            # Sprint 13: Auto-create fulfillment if not already linked
+            if not self.purchase_receipt:
+                pr = PurchaseReceipt.objects.create(
+                    supplier=self.supplier,
+                    date=self.date if not isinstance(self.date, str) else self.date,
+                    purchase_order=self.purchase_order,
                 )
-            # 2. Mark cancelled and persist
+                for item in self.items.all():
+                    PurchaseReceiptItem.objects.create(
+                        receipt=pr,
+                        batch=item.batch,
+                        quantity=item.quantity,
+                        purchase_order_item=item.purchase_order_item,
+                    )
+                pr.submit()
+                self.purchase_receipt = pr
+
+            # Sprint 14: Update PO item billed_qty
+            for item in self.items.all():
+                if item.purchase_order_item:
+                    item.purchase_order_item.billed_qty += item.quantity
+                    item.purchase_order_item.save(update_fields=['billed_qty'])
+
+            # Sprint 12: Post AP accounting entries (no stock here)
+            post_purchase_invoice_gl(self)
+            self.status = 'SUBMITTED'
+            self.save()
+
+    def cancel(self):
+        """Atomically cancel: reverse AP GL, cancel linked receipt."""
+        from accounting.services import reverse_document_gl
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+
+        with transaction.atomic():
+            # Sprint 13: Cancel linked PurchaseReceipt (reverses stock + PO received_qty)
+            if self.purchase_receipt and self.purchase_receipt.status == 'SUBMITTED':
+                self.purchase_receipt.cancel()
+
+            # Sprint 14: Reverse PO item billed_qty
+            for item in self.items.all():
+                if item.purchase_order_item:
+                    item.purchase_order_item.billed_qty -= item.quantity
+                    item.purchase_order_item.save(update_fields=['billed_qty'])
+
+            # Sprint 12: Reverse AP accounting entries
+            reverse_document_gl('PurchaseInvoice', self.id)
             self.status = 'CANCELLED'
             self.save()
 
     def delete(self, *args, **kwargs):
-        raise ValidationError(
-            "Submitted invoices cannot be hard-deleted. "
-            "Use .cancel() to reverse stock and mark as cancelled."
-        )
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted documents cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
 
     def __str__(self):
         return f"Purchase {self.invoice_number} from {self.supplier}"
@@ -132,6 +560,13 @@ class SupplierPayment(models.Model):
         related_name='payment_entry'
     )
     
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+        if is_new:
+            from accounting.services import post_supplier_payment_gl
+            post_supplier_payment_gl(self)
+
     def __str__(self):
         return f"Payment {self.amount} for {self.invoice.invoice_number}"
 
@@ -139,23 +574,28 @@ class PurchaseItem(models.Model):
     invoice = models.ForeignKey(PurchaseInvoice, related_name='items', on_delete=models.CASCADE)
     batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
     quantity = models.IntegerField()
-    # unit_cost removed as per request 
-    # User said: basic_rate (Price before tax), net_cost (Final Cost: Basic + Tax).
-    # Existing unit_cost seems to have been used as "Purchase Rate" in views.
-    # I will add the new fields.
     basic_rate = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     tax_amount = models.DecimalField(max_digits=12, decimal_places=2)
-    # net_cost removed as per request
     
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     profit_margin = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
 
+    # Sprint 14: Link to specific purchase order line item
+    purchase_order_item = models.ForeignKey(
+        PurchaseOrderItem, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoice_items'
+    )
+
     def __str__(self):
         return f"{self.quantity} x {self.batch} in {self.invoice}"
 
+
+# ═══════════════════════════════════════════════════════════════════════
 # Part B: Sales (Outward)
+# ═══════════════════════════════════════════════════════════════════════
+
 class SalesInvoice(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True)
     invoice_number = models.CharField(max_length=50, unique=True, default=generate_invoice_number)
@@ -165,7 +605,6 @@ class SalesInvoice(models.Model):
     total_sgst = models.DecimalField(max_digits=12, decimal_places=2)
     grand_total = models.DecimalField(max_digits=12, decimal_places=2)
 
-    # Sprint 40: Payment Tracking
     PAYMENT_STATUS_CHOICES = [
         ('UNPAID', 'Unpaid'),
         ('PARTIAL', 'Partial'),
@@ -176,13 +615,23 @@ class SalesInvoice(models.Model):
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     due_date = models.DateField(null=True, blank=True)
 
-    # Sprint 3: Immutable Document Lifecycle
-    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
 
-    # Sprint 4: Amend Lifecycle — links amended doc back to cancelled original
     amended_from = models.ForeignKey(
         'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='amendments'
+    )
+
+    # Sprint 13: Link to fulfillment document
+    delivery_note = models.ForeignKey(
+        DeliveryNote, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoices'
+    )
+
+    # Sprint 14: Link to sales order
+    sales_order = models.ForeignKey(
+        SalesOrder, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sales_invoices'
     )
 
     @property
@@ -191,17 +640,13 @@ class SalesInvoice(models.Model):
         return (self.total_cgst or Decimal('0')) + (self.total_sgst or Decimal('0'))
 
     def save(self, *args, **kwargs):
-        # Auto-set due date if not present (Default: Same day for now, can be +30)
         if not self.due_date:
              self.due_date = self.date
 
-        # Calculate balance due unless it is explicitly handled by signals (signals handle updates mainly)
-        # But for initial creation or direct edits:
         self.grand_total = Decimal(str(self.grand_total))
         self.amount_received = Decimal(str(self.amount_received))
         self.balance_due = self.grand_total - self.amount_received
         
-        # Determine status
         if self.balance_due <= Decimal('0.01'):
             self.payment_status = 'PAID'
             if self.balance_due < 0: self.balance_due = 0
@@ -213,36 +658,77 @@ class SalesInvoice(models.Model):
         super().save(*args, **kwargs)
         return f"Sales {self.invoice_number} to {self.customer}"
 
-    def cancel(self):
-        """Atomically cancel this invoice: reverse stock, refund wallet, mark CANCELLED.
-        Does NOT delete any records — all data is preserved for audit."""
-        from inventory.services import process_stock_movement
-        if self.status == 'CANCELLED':
-            raise ValidationError("This invoice is already cancelled.")
+    def submit(self):
+        """Sprint 13: Transition DRAFT → SUBMITTED.
+
+        Auto-creates and submits a DeliveryNote (stock movement)
+        if one is not already linked, then posts AR/Revenue/Tax GL.
+        """
+        from accounting.services import post_sales_invoice_gl
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
 
         with transaction.atomic():
-            # 1. Reverse stock for every line item (inward = positive, restoring stock)
-            for item in self.items.all():
-                process_stock_movement(
-                    batch_id=item.batch.id,
-                    quantity=item.quantity,
-                    doc_type='SalesInvoiceCancel',
-                    doc_id=self.id,
+            # Sprint 13: Auto-create fulfillment if not already linked
+            if not self.delivery_note:
+                dn = DeliveryNote.objects.create(
+                    customer=self.customer,
+                    date=self.date if not isinstance(self.date, str) else self.date,
+                    sales_order=self.sales_order,
                 )
-            # 2. Refund wallet payments (only positive-amount WALLET entries)
+                for item in self.items.all():
+                    DeliveryNoteItem.objects.create(
+                        delivery_note=dn,
+                        batch=item.batch,
+                        quantity=item.quantity,
+                        sales_order_item=item.sales_order_item,
+                    )
+                dn.submit()
+                self.delivery_note = dn
+
+            # Sprint 14: Update SO item billed_qty
+            for item in self.items.all():
+                if item.sales_order_item:
+                    item.sales_order_item.billed_qty += item.quantity
+                    item.sales_order_item.save(update_fields=['billed_qty'])
+
+            # Sprint 12: Post AR/Revenue/Tax accounting entries (no stock here)
+            post_sales_invoice_gl(self)
+            self.status = 'SUBMITTED'
+            self.save()
+
+    def cancel(self):
+        """Atomically cancel: reverse AR GL, cancel linked DN, refund wallet."""
+        from accounting.services import reverse_document_gl
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
+
+        with transaction.atomic():
+            # Sprint 13: Cancel linked DeliveryNote (reverses stock + SO delivered_qty)
+            if self.delivery_note and self.delivery_note.status == 'SUBMITTED':
+                self.delivery_note.cancel()
+
+            # Sprint 14: Reverse SO item billed_qty
+            for item in self.items.all():
+                if item.sales_order_item:
+                    item.sales_order_item.billed_qty -= item.quantity
+                    item.sales_order_item.save(update_fields=['billed_qty'])
+
             for payment in self.payments.filter(amount__gt=0, payment_mode='WALLET'):
                 if self.customer:
                     self.customer.wallet_balance += payment.amount
                     self.customer.save()
-            # 3. Mark cancelled and persist
+            # Sprint 12: Reverse AR/Revenue/Tax accounting entries
+            reverse_document_gl('SalesInvoice', self.id)
             self.status = 'CANCELLED'
             self.save()
 
     def delete(self, *args, **kwargs):
-        raise ValidationError(
-            "Submitted invoices cannot be hard-deleted. "
-            "Use .cancel() to reverse stock and mark as cancelled."
-        )
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted documents cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
 
 class SalesItem(models.Model):
     invoice = models.ForeignKey(SalesInvoice, related_name='items', on_delete=models.CASCADE)
@@ -253,12 +739,16 @@ class SalesItem(models.Model):
     tax_amount = models.DecimalField(max_digits=12, decimal_places=2)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
 
+    # Sprint 14: Link to specific sales order line item
+    sales_order_item = models.ForeignKey(
+        SalesOrderItem, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoice_items'
+    )
+
     def clean(self):
         from django.core.exceptions import ValidationError
-        # Check sufficient stock (Smart Validation)
         available_stock = self.batch.current_quantity
         
-        # If editing, put back the old amount
         if self.pk:
             try:
                 old_instance = SalesItem.objects.get(pk=self.pk)
@@ -272,7 +762,11 @@ class SalesItem(models.Model):
     def __str__(self):
         return f"{self.quantity} x {self.batch} in {self.invoice}"
 
+
+# ═══════════════════════════════════════════════════════════════════════
 # Part C: Returns (Adjustments)
+# ═══════════════════════════════════════════════════════════════════════
+
 class PurchaseReturn(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
     original_invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.SET_NULL, null=True, blank=True)
@@ -280,39 +774,48 @@ class PurchaseReturn(models.Model):
     reason = models.CharField(max_length=255)
     total_refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
 
-    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    def submit(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=-item.quantity,
+                    doc_type='PurchaseReturn',
+                    doc_id=self.id,
+                )
+            self.status = 'SUBMITTED'
+            self.save()
 
     def cancel(self):
         from inventory.services import process_stock_movement
-        from django.core.exceptions import ValidationError
-        from django.db import transaction
-        if self.status == 'CANCELLED':
-            raise ValidationError("This return is already cancelled.")
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
 
         with transaction.atomic():
-            # 1. Reverse Inventory Impact via Ledger Service
             for item in self.items.all():
                 process_stock_movement(
                     batch_id=item.batch.id,
                     quantity=item.quantity,
                     doc_type='PurchaseReturnCancel',
-                    doc_id=self.id
+                    doc_id=self.id,
                 )
-            
-            # 2. Reverse Financial Impact
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()
-                
-            # 3. Mark cancelled
             self.status = 'CANCELLED'
             self.save()
 
     def delete(self, *args, **kwargs):
-        from django.core.exceptions import ValidationError
-        raise ValidationError(
-            "Submitted returns cannot be hard-deleted. "
-            "Use .cancel() to reverse stock and mark as cancelled."
-        )
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted returns cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
 
     def __str__(self):
         return f"Return to {self.supplier} on {self.date}"
@@ -338,8 +841,6 @@ class CustomerPayment(models.Model):
         ('SALES_RETURN', 'Sales Return Adjustment'),
     ]
     
-    # Sprint 54: Changed from CASCADE to PROTECT to prevent 'Ghost Invoices'
-    # Sprint 57: Allow null invoice for generic Wallet Credits (e.g. Sales Return)
     invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.PROTECT, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
@@ -348,25 +849,27 @@ class CustomerPayment(models.Model):
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
-    # Sprint 54: Strict reversal linking via FK instead of notes-based pattern matching
-    # Prevents 'Fake Reversals' exploit by linking reversal to original payment by ID
     reversal_of = models.OneToOneField(
         'self',
-        null=True,
-        blank=True,
+        null=True, blank=True,
         on_delete=models.PROTECT,
         related_name='reversal_entry'
     )
 
-    # Sprint 57: Link Payment to SalesReturn for direct financial credit
     sales_return = models.OneToOneField(
         'SalesReturn',
-        null=True,
-        blank=True,
+        null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name='payment_entry'
     )
     
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+        if is_new:
+            from accounting.services import post_customer_payment_gl
+            post_customer_payment_gl(self)
+
     def __str__(self):
         if self.invoice:
             return f"Receipt {self.amount} for {self.invoice.invoice_number}"
@@ -381,42 +884,51 @@ class SalesReturn(models.Model):
     date = models.DateField()
     refund_amount = models.DecimalField(max_digits=12, decimal_places=2)
 
-    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='ACTIVE')
+    status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
+
+    def submit(self):
+        from inventory.services import process_stock_movement
+        if self.status != 'DRAFT':
+            raise ValidationError("Only draft documents can be submitted.")
+
+        with transaction.atomic():
+            for item in self.items.all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='SalesReturn',
+                    doc_id=self.id,
+                )
+            self.status = 'SUBMITTED'
+            self.save()
 
     def cancel(self):
         from inventory.services import process_stock_movement, InsufficientStockError
-        from django.core.exceptions import ValidationError
-        from django.db import transaction
-        if self.status == 'CANCELLED':
-            raise ValidationError("This return is already cancelled.")
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only submitted documents can be cancelled.")
 
         with transaction.atomic():
-            # 1. Reverse Inventory Impact
             for item in self.items.all():
                 try:
                     process_stock_movement(
                         batch_id=item.batch.id,
                         quantity=-item.quantity,
                         doc_type='SalesReturnCancel',
-                        doc_id=self.id
+                        doc_id=self.id,
                     )
                 except InsufficientStockError as e:
-                    raise ValidationError(f"Cannot revert return. Removing this return stock drops actual stock below zero: {str(e)}")
-            
-            # 2. Reverse Financial Impact
+                    raise ValidationError(f"Cannot revert return: {str(e)}")
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()
-                
-            # 3. Mark cancelled
             self.status = 'CANCELLED'
             self.save()
 
     def delete(self, *args, **kwargs):
-        from django.core.exceptions import ValidationError
-        raise ValidationError(
-            "Submitted returns cannot be hard-deleted. "
-            "Use .cancel() to reverse stock and mark as cancelled."
-        )
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                "Submitted returns cannot be deleted. Use .cancel() instead."
+            )
+        models.Model.delete(self, *args, **kwargs)
 
     def __str__(self):
         return f"Return from {self.original_sale} on {self.date}"

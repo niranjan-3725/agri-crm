@@ -13,8 +13,8 @@ from django.db import IntegrityError, connection
 from django.db.models import F
 from django.test import TestCase
 
-from inventory.models import Batch, StockMovement
-from inventory.services import InsufficientStockError, process_stock_movement
+from inventory.models import Batch, StockBin, StockMovement
+from inventory.services import InsufficientStockError, get_default_warehouse, process_stock_movement
 from master_data.models import Category, Manufacturer, Product
 
 
@@ -39,7 +39,11 @@ class StockMovementServiceTests(TestCase):
         )
 
     def _make_batch(self, qty: int = 0, **overrides) -> Batch:
-        """Helper to create a Batch with sensible defaults."""
+        """Helper to create a Batch with sensible defaults.
+
+        Sprint 8: Also creates a StockBin in the default warehouse
+        so that outward movements have stock to draw from.
+        """
         defaults = dict(
             product=self.product,
             batch_number='B001',
@@ -49,7 +53,14 @@ class StockMovementServiceTests(TestCase):
             current_quantity=qty,
         )
         defaults.update(overrides)
-        return Batch.objects.create(**defaults)
+        batch = Batch.objects.create(**defaults)
+        # Seed a matching StockBin in the default warehouse
+        wh = get_default_warehouse()
+        StockBin.objects.get_or_create(
+            warehouse=wh, batch=batch,
+            defaults={'actual_qty': qty},
+        )
+        return batch
 
     # ------------------------------------------------------------------
     # 1. Atomic Ledger Creation

@@ -25,6 +25,14 @@ class WalletReversalScenarioTest(TestCase):
             current_quantity=100,
             mrp=200
         )
+        # Sprint 8: Seed StockBin for warehouse-aware ledger
+        from inventory.models import StockBin
+        from inventory.services import get_default_warehouse
+        wh = get_default_warehouse()
+        StockBin.objects.get_or_create(
+            warehouse=wh, batch=self.batch,
+            defaults={'actual_qty': self.batch.current_quantity},
+        )
         
         # 2. Create 'Test Zero' Customer
         self.customer = Customer.objects.create(

@@ -33,6 +33,11 @@ class Product(models.Model):
     unit_type = models.CharField(max_length=20, choices=UNIT_CHOICES)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
     manufacturer = models.ForeignKey(Manufacturer, on_delete=models.CASCADE, related_name='products')
+    # Sprint 10: Moving Average Valuation
+    moving_average_price = models.DecimalField(
+        max_digits=15, decimal_places=4, default=0,
+        help_text="Weighted-average cost, recalculated on purchase inward.",
+    )
 
     def __str__(self):
         return self.name

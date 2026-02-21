@@ -1,9 +1,12 @@
 import datetime
-from django.shortcuts import render
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
+from django.views.decorators.http import require_http_methods
 from django.db.models import Q, Sum, F
 from django.core.paginator import Paginator
 from django.utils import timezone
-from .models import Batch
+from .models import Batch, StockReconciliation
+from .services import reconcile_stock, InsufficientStockError
 
 
 def inventory_list(request):
@@ -81,3 +84,54 @@ def inventory_list(request):
         return render(request, 'inventory/partials/inventory_table.html', context)
 
     return render(request, 'inventory/inventory_list.html', context)
+
+
+@require_http_methods(["GET", "POST"])
+def stock_reconcile(request, batch_id):
+    """Admin view: submit a physical stock count and reconcile the batch."""
+    batch = get_object_or_404(Batch, pk=batch_id)
+
+    if request.method == 'POST':
+        try:
+            new_qty_str = request.POST.get('new_quantity', '').strip()
+            reason = request.POST.get('reason', 'Count Error')
+            notes = request.POST.get('notes', '')
+
+            if not new_qty_str:
+                raise ValueError("New quantity is required.")
+
+            new_quantity = int(new_qty_str)
+            recon = reconcile_stock(
+                batch_id=batch.id,
+                new_quantity=new_quantity,
+                reason=reason,
+                notes=notes,
+            )
+
+            if recon.delta == 0:
+                messages.info(
+                    request,
+                    f"Stock confirmed: {batch} already has {new_quantity} units. No adjustment needed.",
+                )
+            else:
+                direction = "added" if recon.delta > 0 else "removed"
+                messages.success(
+                    request,
+                    f"Reconciliation complete: {abs(recon.delta)} units {direction} for {batch}. "
+                    f"New quantity: {new_quantity}.",
+                )
+            return redirect('inventory_list')
+
+        except ValueError as e:
+            messages.error(request, f"Invalid input: {e}")
+        except InsufficientStockError as e:
+            messages.error(request, f"Reconciliation failed: {e}")
+        except Exception as e:
+            messages.error(request, f"Unexpected error: {e}")
+
+    past_reconciliations = batch.reconciliations.order_by('-created_at')[:10]
+    return render(request, 'inventory/stock_reconcile.html', {
+        'batch': batch,
+        'reason_choices': StockReconciliation.REASON_CHOICES,
+        'past_reconciliations': past_reconciliations,
+    })
