@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block content %}
+<div class='p-10 max-w-7xl mx-auto'>
+    <div class='flex justify-between items-end mb-8'>
+        <div>
+            <span class='text-xs font-bold text-gray-400 uppercase tracking-widest'>Selling Pipeline</span>
+            <h1 class='text-4xl font-bold text-gray-900'>Purchase Orders</h1>
+        </div>
+        <a href='{% url "create_purchase_order" %}' class='bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold'>+ New Purchase Order</a>
+    </div>
+    <div class='space-y-4'>
+        {% for o in orders %}
+        <div class='bg-white p-6 rounded-2xl border border-gray-100 flex justify-between items-center hover:border-gray-300 transition-all'>
+            <div class='w-48'>
+                <a href='{% url "purchase_order_detail" o.pk %}' class='text-lg font-bold hover:text-blue-600 transition-colors'>SO-{{ o.pk }}</a>
+                <div class='text-xs text-gray-400 mt-1'>{{ o.date }}</div>
+            </div>
+            <div class='flex-1 font-bold text-gray-900'>{{ o.supplier.name }}</div>
+            
+            <div class='w-32 space-y-1' title='Delivery Progress'>
+                <div class='text-xs font-bold text-gray-500'>Delivered</div>
+                <div class='h-2 bg-gray-100 rounded-full overflow-hidden w-24'>
+                    <div class='h-full bg-violet-500 rounded-full' style='width: {{ o.per_delivered }}%'></div>
+                </div>
+            </div>
+            <div class='w-32 space-y-1' title='Billing Progress'>
+                <div class='text-xs font-bold text-gray-500'>Billed</div>
+                <div class='h-2 bg-gray-100 rounded-full overflow-hidden w-24'>
+                    <div class='h-full bg-blue-500 rounded-full' style='width: {{ o.per_billed }}%'></div>
+                </div>
+            </div>
+
+            <div class='w-32'>
+                {% include 'components/document_status_badge.html' with doc_status=o.status %}
+            </div>
+            <a href='{% url "purchase_order_detail" o.pk %}' class='text-sm text-blue-600 bg-blue-50 px-4 py-2 rounded-xl font-bold hover:bg-blue-100 transition-colors'>View</a>
+        </div>
+        {% empty %}
+        <p class='text-gray-500'>No sales orders found.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

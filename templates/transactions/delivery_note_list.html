@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block content %}
+<div class='p-10 max-w-7xl mx-auto'>
+    <div class='flex justify-between items-end mb-8'>
+        <div>
+            <span class='text-xs font-bold text-gray-400 uppercase tracking-widest'>Selling Pipeline</span>
+            <h1 class='text-4xl font-bold text-gray-900'>Delivery Notes</h1>
+        </div>
+        <a href='{% url "create_delivery_note" %}' class='bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold'>+ New Dispatch</a>
+    </div>
+    <div class='space-y-4'>
+        {% for n in notes %}
+        <div class='bg-white p-6 rounded-2xl border border-gray-100 flex justify-between items-center hover:border-gray-300 transition-all'>
+            <div class='w-48'>
+                <a href='{% url "delivery_note_detail" n.pk %}' class='text-lg font-bold hover:text-blue-600 transition-colors'>DN-{{ n.pk }}</a>
+                <div class='text-xs text-gray-400 mt-1'>{{ n.date }}</div>
+            </div>
+            <div class='flex-1 font-bold text-gray-900'>{{ n.customer.name }}</div>
+            <div class='w-48 text-sm text-gray-500'>
+                {% if n.sales_order %}Linked to SO-{{ n.sales_order.id }}{% else %}Direct Dispatch{% endif %}
+            </div>
+            <div class='w-32'>
+                {% include 'components/document_status_badge.html' with doc_status=n.status %}
+            </div>
+            <a href='{% url "delivery_note_detail" n.pk %}' class='text-sm text-blue-600 bg-blue-50 px-4 py-2 rounded-xl font-bold hover:bg-blue-100 transition-colors'>View</a>
+        </div>
+        {% empty %}
+        <p class='text-gray-500'>No delivery notes found.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

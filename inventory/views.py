@@ -10,7 +10,11 @@ from .services import reconcile_stock, InsufficientStockError
 
 
 def inventory_list(request):
-    all_batches_qs = Batch.objects.select_related('product', 'product__category').all()
+    all_batches_qs = Batch.objects.select_related(
+        'product', 'product__category'
+    ).prefetch_related(
+        'stock_bins__warehouse'  # Sprint 15: Multi-warehouse data
+    ).all()
 
     # ---------- Filters ----------
     query = request.GET.get('q', '').strip()
@@ -61,6 +65,10 @@ def inventory_list(request):
     # Total count over full base (for hero card sub-line)
     total_batch_count = base_qs.count()
 
+    # Sprint 15: Warehouse count for sidebar
+    from .models import Warehouse
+    warehouse_count = Warehouse.objects.count()
+
     # ---------- Pagination ----------
     paginator = Paginator(filtered_qs, 20)
     page_number = request.GET.get('page')
@@ -78,12 +86,14 @@ def inventory_list(request):
         'expiring_soon_count': expiring_soon_count,
         'top_categories': top_categories,
         'total_batch_count': total_batch_count,
+        'warehouse_count': warehouse_count,
     }
 
     if request.headers.get('HX-Request'):
         return render(request, 'inventory/partials/inventory_table.html', context)
 
     return render(request, 'inventory/inventory_list.html', context)
+
 
 
 @require_http_methods(["GET", "POST"])

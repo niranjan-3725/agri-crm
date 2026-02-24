@@ -1,5 +1,7 @@
 from django.urls import path
 from . import views
+from . import views_pipeline
+from . import views_buying_pipeline
 
 urlpatterns = [
     path('sales/new/', views.create_sale, name='create_sale'),
@@ -47,4 +49,40 @@ urlpatterns = [
     path('purchases/<int:pk>/submit/', views.submit_purchase_invoice, name='submit_purchase_invoice'),
     path('returns/sales/<int:pk>/submit/', views.submit_sales_return, name='submit_sales_return'),
     path('returns/purchase/<int:pk>/submit/', views.submit_purchase_return, name='submit_purchase_return'),
+    # Sprint 15: Cancel actions
+    path('sales/<int:pk>/cancel/', views.cancel_sales_invoice, name='cancel_sales_invoice'),
+    path('purchases/<int:pk>/cancel/', views.cancel_purchase_invoice, name='cancel_purchase_invoice'),
+
+    # Sprint 18: Buying Pipeline
+    path('purchase-orders/', views_buying_pipeline.purchase_order_list, name='purchase_po_list'),
+    path('purchase-orders/new/', views_buying_pipeline.create_purchase_order, name='create_purchase_order'),
+    path('purchase-orders/<int:pk>/', views_buying_pipeline.purchase_order_detail, name='purchase_order_detail'),
+    path('purchase-orders/<int:pk>/submit/', views_buying_pipeline.submit_purchase_order, name='submit_purchase_po'),
+    path('purchase-orders/<int:pk>/cancel/', views_buying_pipeline.cancel_purchase_order, name='cancel_purchase_po'),
+    
+    path('purchase-receipts/', views_buying_pipeline.purchase_receipt_list, name='purchase_receipt_list'),
+    path('purchase-receipts/new/', views_buying_pipeline.create_purchase_receipt, name='create_purchase_receipt'),
+    path('purchase-receipts/<int:pk>/', views_buying_pipeline.purchase_receipt_detail, name='purchase_receipt_detail'),
+    path('purchase-receipts/<int:pk>/submit/', views_buying_pipeline.submit_purchase_receipt, name='submit_purchase_receipt'),
+    path('purchase-receipts/<int:pk>/cancel/', views_buying_pipeline.cancel_purchase_receipt, name='cancel_purchase_receipt'),
+
+    # Sprint 17: Selling Pipeline 
+    path('quotations/', views_pipeline.quotation_list, name='quotation_list'),
+    path('quotations/new/', views_pipeline.create_quotation, name='create_quotation'),
+    path('quotations/<int:pk>/', views_pipeline.quotation_detail, name='quotation_detail'),
+    path('quotations/<int:pk>/submit/', views_pipeline.submit_quotation, name='submit_quotation'),
+    path('quotations/<int:pk>/cancel/', views_pipeline.cancel_quotation, name='cancel_quotation'),
+    
+    path('sales-orders/', views_pipeline.sales_order_list, name='sales_order_list'),
+    path('sales-orders/new/', views_pipeline.create_sales_order, name='create_sales_order'),
+    path('sales-orders/<int:pk>/', views_pipeline.sales_order_detail, name='sales_order_detail'),
+    path('sales-orders/<int:pk>/submit/', views_pipeline.submit_sales_order, name='submit_sales_order'),
+    path('sales-orders/<int:pk>/cancel/', views_pipeline.cancel_sales_order, name='cancel_sales_order'),
+    
+    path('delivery-notes/', views_pipeline.delivery_note_list, name='delivery_note_list'),
+    path('delivery-notes/new/', views_pipeline.create_delivery_note, name='create_delivery_note'),
+    path('delivery-notes/<int:pk>/', views_pipeline.delivery_note_detail, name='delivery_note_detail'),
+    path('delivery-notes/<int:pk>/submit/', views_pipeline.submit_delivery_note, name='submit_delivery_note'),
+    path('delivery-notes/<int:pk>/cancel/', views_pipeline.cancel_delivery_note, name='cancel_delivery_note'),
 ]
+

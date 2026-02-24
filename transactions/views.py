@@ -201,6 +201,9 @@ def create_sale(request):
                 
                 customer = Customer.objects.get(id=customer_id) if customer_id else None
                 
+                so_id = request.POST.get('sales_order_id')
+                dn_id = request.POST.get('delivery_note_id')
+                
                 # Create Invoice
                 invoice = SalesInvoice.objects.create(
                     customer=customer,
@@ -208,7 +211,9 @@ def create_sale(request):
                     total_taxable=0,
                     total_cgst=0,
                     total_sgst=0,
-                    grand_total=0 # Will update after items
+                    grand_total=0,
+                    sales_order_id=so_id if so_id else None,
+                    delivery_note_id=dn_id if dn_id else None
                 )
                 
                 # Process Items
@@ -243,6 +248,19 @@ def create_sale(request):
                     taxable_value = total / (1 + (tax_rate_float / 100))
                     tax_amount = total - taxable_value
                     
+                    # Resolving line item linkage to Sales Order
+                    sales_order_item = None
+                    if dn_id:
+                        from transactions.models import DeliveryNoteItem
+                        dni = DeliveryNoteItem.objects.filter(delivery_note_id=dn_id, batch_id=batch.id).first()
+                        if dni and dni.sales_order_item:
+                            sales_order_item = dni.sales_order_item
+                    elif so_id:
+                        from transactions.models import SalesOrderItem
+                        soi = SalesOrderItem.objects.filter(sales_order_id=so_id, batch_id=batch.id).first()
+                        if soi:
+                            sales_order_item = soi
+                    
                     item = SalesItem(
                         invoice=invoice,
                         batch=batch,
@@ -250,7 +268,8 @@ def create_sale(request):
                         unit_price=price, # Storing Tax-Inclusive Price
                         tax_rate=tax_rate,
                         tax_amount=tax_amount,
-                        total_amount=total
+                        total_amount=total,
+                        sales_order_item=sales_order_item
                     )
                     # Refresh batch to get DB-level qty (stale-state fix for multi-item same-batch)
                     batch.refresh_from_db()
@@ -305,10 +324,63 @@ def create_sale(request):
             return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'error': str(e)})
 
     # GET Request
+    existing_items = []
+    dn_id = request.GET.get('delivery_note_id')
+    so_id = request.GET.get('sales_order_id')
+    invoice = None
+
+    if dn_id:
+        from transactions.models import DeliveryNote
+        dn = DeliveryNote.objects.get(pk=dn_id)
+        invoice = type('DummyInvoice', (), {'customer': dn.customer, 'payment_status': 'PAID'})
+        for item in dn.items.all():
+            existing_items.append({
+                'product_id': item.batch.product.id,
+                'product_name': item.batch.product.name,
+                'batch_id': item.batch.id,
+                'batch_number': item.batch.batch_number,
+                'current_stock': item.batch.current_quantity,
+                'qty': item.quantity,
+                'price': float(item.batch.price),
+                'total': float(item.quantity * item.batch.price),
+                'size': item.batch.size,
+                'unit': item.batch.unit,
+                'size_label': f'{item.batch.size} {item.batch.unit}' if item.batch.size else '',
+            })
+        request.session['temp_invoice_dn'] = dn_id # Fallback if POST fails
+
+    elif so_id:
+        from transactions.models import SalesOrder
+        so = SalesOrder.objects.get(pk=so_id)
+        invoice = type('DummyInvoice', (), {'customer': so.customer, 'payment_status': 'PAID'})
+        for item in so.items.all():
+            pending = item.quantity - item.billed_qty
+            if pending > 0:
+                existing_items.append({
+                    'product_id': item.batch.product.id,
+                    'product_name': item.batch.product.name,
+                    'batch_id': item.batch.id,
+                    'batch_number': item.batch.batch_number,
+                    'current_stock': item.batch.current_quantity,
+                    'qty': pending,
+                    'price': float(item.unit_price),
+                    'total': float(pending * item.unit_price),
+                    'size': item.batch.size,
+                    'unit': item.batch.unit,
+                    'size_label': f'{item.batch.size} {item.batch.unit}' if item.batch.size else '',
+                })
+        request.session['temp_invoice_so'] = so_id
+
     customers = Customer.objects.all()
-    # Batches for dropdown (Active and > 0 stock)
     batches = Batch.objects.filter(is_active=True, current_quantity__gt=0).select_related('product')
-    return render(request, 'transactions/sales_form_v2.html', {'customers': customers, 'batches': batches})
+    return render(request, 'transactions/sales_form_v2.html', {
+        'customers': customers, 
+        'batches': batches,
+        'existing_items': existing_items,
+        'invoice': invoice,
+        'delivery_note_id': dn_id,
+        'sales_order_id': so_id
+    })
 
 def sales_list(request):
     invoices_list = SalesInvoice.objects.select_related('customer').exclude(status='CANCELLED').order_by('-date', '-id')
@@ -347,8 +419,45 @@ def sales_list(request):
     return render(request, 'transactions/sales_list.html', context)
 
 def invoice_detail(request, pk):
+    from accounting.models import GLEntry
+    from inventory.models import StockMovement
+
     invoice = get_object_or_404(SalesInvoice, pk=pk)
-    return render(request, 'transactions/invoice_detail.html', {'invoice': invoice})
+
+    # Sprint 15: Gather all GL entries for this invoice
+    gl_entries = list(GLEntry.objects.filter(
+        reference_type='SalesInvoice', reference_id=invoice.id
+    ).select_related('account').order_by('created_at'))
+
+    # Also include GL entries from the linked DeliveryNote
+    if invoice.delivery_note_id:
+        gl_entries += list(GLEntry.objects.filter(
+            reference_type='DeliveryNote', reference_id=invoice.delivery_note_id
+        ).select_related('account').order_by('created_at'))
+
+    # Stock movements from linked DeliveryNote
+    stock_movements = []
+    if invoice.delivery_note_id:
+        stock_movements = StockMovement.objects.filter(
+            reference_document_type='DeliveryNote',
+            reference_document_id=invoice.delivery_note_id
+        ).select_related('batch__product', 'warehouse').order_by('created_at')
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
+    context = {
+        'invoice': invoice,
+        'gl_entries': gl_entries,
+        'stock_movements': stock_movements,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        # Sprint 15: Action URLs for ERP controls
+        'submit_url': f'/sales/{invoice.pk}/submit/',
+        'cancel_url': f'/sales/{invoice.pk}/cancel/',
+        'edit_url': f'/sales/{invoice.pk}/edit/',
+    }
+    return render(request, 'transactions/invoice_detail.html', context)
 
 def delete_invoice(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
@@ -697,6 +806,9 @@ def delete_supplier_payment(request, pk):
     return redirect('purchase_detail', pk=invoice_pk)
 
 def purchase_detail(request, pk):
+    from accounting.models import GLEntry
+    from inventory.models import StockMovement
+
     invoice = get_object_or_404(PurchaseInvoice, pk=pk)
     items = invoice.items.select_related('batch__product').annotate(
         margin=ExpressionWrapper(
@@ -709,16 +821,42 @@ def purchase_detail(request, pk):
     tax_total = items.aggregate(Sum('tax_amount'))['tax_amount__sum'] or 0
     loading = invoice.loading_charges or 0
     discount = invoice.additional_discount or 0
-    
-    # Logic: Grand Total = Subtotal + Tax + Loading - Discount
-    # So: Subtotal = Grand Total - Tax - Loading + Discount
     subtotal = invoice.total_amount - tax_total - loading + discount
-    
+
+    # Sprint 15: Gather GL entries for this invoice
+    gl_entries = list(GLEntry.objects.filter(
+        reference_type='PurchaseInvoice', reference_id=invoice.id
+    ).select_related('account').order_by('created_at'))
+
+    # Also include GL entries from linked PurchaseReceipt
+    if invoice.purchase_receipt_id:
+        gl_entries += list(GLEntry.objects.filter(
+            reference_type='PurchaseReceipt', reference_id=invoice.purchase_receipt_id
+        ).select_related('account').order_by('created_at'))
+
+    # Stock movements from linked PurchaseReceipt
+    stock_movements = []
+    if invoice.purchase_receipt_id:
+        stock_movements = StockMovement.objects.filter(
+            reference_document_type='PurchaseReceipt',
+            reference_document_id=invoice.purchase_receipt_id
+        ).select_related('batch__product', 'warehouse').order_by('created_at')
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
     return render(request, 'transactions/purchase_detail.html', {
         'invoice': invoice,
         'items': items,
         'tax_total': tax_total,
-        'subtotal': subtotal
+        'subtotal': subtotal,
+        'gl_entries': gl_entries,
+        'stock_movements': stock_movements,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        'submit_url': f'/purchases/{invoice.pk}/submit/',
+        'cancel_url': f'/purchases/{invoice.pk}/cancel/',
+        'edit_url': f'/purchases/{invoice.pk}/edit/',
     })
 
 def purchase_edit(request, pk):
@@ -885,7 +1023,7 @@ def purchase_edit(request, pk):
                             'expiry_date': expiry,
                             'size': size_val,
                             'unit': unit_val,
-                            'purchase_price': net_cost_per_unit,
+                            'purchase_price': rate_pre_tax,  # Sprint 16: Tax-exclusive valuation
                             'mrp': mrp,
                             'base_selling_price': sell_price,
                             'current_quantity': 0
@@ -899,7 +1037,7 @@ def purchase_edit(request, pk):
                         batch.unit = unit_val or batch.unit
                         batch.mrp = mrp or batch.mrp
                         batch.base_selling_price = sell_price or batch.base_selling_price
-                        batch.purchase_price = net_cost_per_unit
+                        batch.purchase_price = rate_pre_tax  # Sprint 16: Tax-exclusive valuation
                         batch.save()
                     
                     PurchaseItem.objects.create(
@@ -1023,13 +1161,18 @@ def create_purchase(request):
                 loading_charges = float(request.POST.get('loading_charges') or 0)
                 additional_discount = float(request.POST.get('discount') or 0)
                 
+                po_id = request.POST.get('source_purchase_order_id')
+                pr_id = request.POST.get('source_purchase_receipt_id')
+
                 invoice = PurchaseInvoice.objects.create(
                     supplier=supplier,
                     invoice_number=invoice_number,
                     date=date,
                     loading_charges=loading_charges,
                     additional_discount=additional_discount,
-                    total_amount=0 
+                    total_amount=0,
+                    purchase_order_id=po_id if po_id else None,
+                    purchase_receipt_id=pr_id if pr_id else None
                 )
                 
                 # Items
@@ -1089,7 +1232,7 @@ def create_purchase(request):
                         defaults={
                             'manufacturing_date': mfg_date,
                             'expiry_date': expiry,
-                            'purchase_price': net_cost_per_unit, 
+                            'purchase_price': rate_pre_tax,  # Sprint 16: Tax-exclusive valuation
                             'base_selling_price': sell_price,
                             'current_quantity': 0,
                             'size': size,
@@ -1105,10 +1248,22 @@ def create_purchase(request):
                         batch.unit = unit or batch.unit
                         batch.mrp = mrp or batch.mrp
                         batch.base_selling_price = sell_price or batch.base_selling_price
-                        batch.purchase_price = net_cost_per_unit
+                        batch.purchase_price = rate_pre_tax  # Sprint 16: Tax-exclusive valuation
                         batch.save()
                     
-                    # Purchase Item
+                    # Resolve PO item linkage
+                    po_item = None
+                    if pr_id:
+                        from transactions.models import PurchaseReceiptItem
+                        pri = PurchaseReceiptItem.objects.filter(receipt_id=pr_id, batch=batch).first()
+                        if pri and pri.purchase_order_item:
+                            po_item = pri.purchase_order_item
+                    elif po_id:
+                        from transactions.models import PurchaseOrderItem
+                        poi = PurchaseOrderItem.objects.filter(purchase_order_id=po_id, batch=batch).first()
+                        if poi:
+                            po_item = poi
+
                     PurchaseItem.objects.create(
                         invoice=invoice,
                         batch=batch,
@@ -1117,7 +1272,8 @@ def create_purchase(request):
                         basic_rate=rate_pre_tax,
                         selling_price=sell_price,
                         profit_margin=margin_val,
-                        total_amount=total_line_amount
+                        total_amount=total_line_amount,
+                        purchase_order_item=po_item
                     )
                     
                     # Sprint 11: Stock deferred to submit().
@@ -1155,11 +1311,58 @@ def create_purchase(request):
                 'manufacturers': manufacturers, 
                 'error': str(e)
             })
+    existing_items = []
+    supplier = None
+    po_id = request.GET.get('purchase_po_id')
+    pr_id = request.GET.get('purchase_receipt_id')
+
+    if pr_id:
+        from transactions.models import PurchaseReceipt
+        pr = get_object_or_404(PurchaseReceipt, pk=pr_id)
+        supplier = pr.supplier
+        for item in pr.items.all():
+            existing_items.append({
+                'id': str(item.id),
+                'product_id': item.batch.product.id,
+                'product_name': str(item.batch.product.name),
+                'batch_number': str(item.batch.batch_number),
+                'qty': item.quantity,
+                'rate': float(item.batch.purchase_price),
+                'product_tax_rate': float(item.batch.product.category.total_tax) if item.batch.product.category else 0,
+                'mrp': float(item.batch.mrp),
+                'selling_price': float(item.batch.base_selling_price),
+            })
+    elif po_id:
+        from transactions.models import PurchaseOrder
+        po = get_object_or_404(PurchaseOrder, pk=po_id)
+        supplier = po.supplier
+        for item in po.items.all():
+            pending = item.quantity - item.billed_qty
+            if pending > 0:
+                existing_items.append({
+                    'id': str(item.id),
+                    'po_item_id': item.id,
+                    'product_id': item.batch.product.id,
+                    'product_name': str(item.batch.product.name),
+                    'batch_number': str(item.batch.batch_number),
+                    'qty': pending,
+                    'rate': float(item.unit_price),
+                    'product_tax_rate': float(item.batch.product.category.total_tax) if item.batch.product.category else 0,
+                    'mrp': float(item.batch.mrp),
+                    'selling_price': float(item.batch.base_selling_price),
+                })
+    
+    import json
+    invoice_dummy = type('Dummy', (), {'supplier': supplier}) if supplier else None
 
     return render(request, 'transactions/purchase_form.html', {
         'suppliers': suppliers,
         'categories': categories,
-        'manufacturers': manufacturers
+        'manufacturers': manufacturers,
+        'existing_items_json': json.dumps(existing_items) if existing_items else None,
+        'invoice': invoice_dummy,
+        'source_purchase_order_id': po_id,
+        'source_purchase_receipt_id': pr_id
     })
 
 
@@ -2013,3 +2216,25 @@ def submit_purchase_return(request, pk):
         messages.error(request, str(e))
     return redirect('purchase_return_detail', pk=pk)
 
+
+# ── Sprint 15: Document Cancel Actions ──────────────────────────────────
+def cancel_sales_invoice(request, pk):
+    """Transition a SUBMITTED SalesInvoice to CANCELLED."""
+    invoice = get_object_or_404(SalesInvoice, pk=pk)
+    try:
+        invoice.cancel()
+        messages.success(request, f"Invoice {invoice.invoice_number} cancelled. All entries reversed.")
+    except ValidationError as e:
+        messages.error(request, str(e))
+    return redirect('invoice_detail', pk=pk)
+
+
+def cancel_purchase_invoice(request, pk):
+    """Transition a SUBMITTED PurchaseInvoice to CANCELLED."""
+    invoice = get_object_or_404(PurchaseInvoice, pk=pk)
+    try:
+        invoice.cancel()
+        messages.success(request, f"Invoice {invoice.invoice_number} cancelled. All entries reversed.")
+    except ValidationError as e:
+        messages.error(request, str(e))
+    return redirect('purchase_detail', pk=pk)

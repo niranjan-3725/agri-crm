@@ -1,0 +1,142 @@
+{# Sprint 15: Reusable ERP Document Action Controls #}
+
+{% if doc_status == 'DRAFT' %}
+{# ── DRAFT: Show Submit + Edit ── #}
+<div class="space-y-3" x-data="{ showConfirm: false }">
+    {# Submit Button — Primary CTA #}
+    <button type="button" @click="showConfirm = true"
+        class="flex items-center justify-center w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-base transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+        </svg>
+        Submit
+    </button>
+
+    {# Confirmation Modal #}
+    <template x-teleport="body">
+        <div x-show="showConfirm" x-cloak
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            @click.self="showConfirm = false" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm mx-4 w-full"
+                x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100">
+                <div class="text-center mb-4">
+                    <div class="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-800">Submit Document?</h3>
+                    <p class="text-sm text-gray-500 mt-1">Once submitted, it will post entries to the ledgers and cannot
+                        be
+                        edited.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button type="button" @click="showConfirm = false"
+                        class="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold text-sm transition-all">
+                        Cancel
+                    </button>
+                    <form method="POST" action="{{ submit_url }}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit"
+                            class="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-semibold text-sm transition-all shadow-lg shadow-emerald-500/20">
+                            Yes, Submit
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    {# Edit Button #}
+    {% if edit_url %}
+    <a href="{{ edit_url }}"
+        class="flex items-center justify-center w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl font-bold text-base transition-all gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z">
+            </path>
+        </svg>
+        Edit Draft
+    </a>
+    {% endif %}
+</div>
+
+{% elif doc_status == 'SUBMITTED' %}
+{# ── SUBMITTED: Show Cancel only ── #}
+<div class="space-y-3" x-data="{ showConfirm: false }">
+    <button type="button" @click="showConfirm = true"
+        class="flex items-center justify-center w-full py-4 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-2xl font-bold text-base transition-all border-2 border-red-200 hover:border-red-300 gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+        Cancel Document
+    </button>
+
+    {# Cancel Confirmation Modal #}
+    <template x-teleport="body">
+        <div x-show="showConfirm" x-cloak
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            @click.self="showConfirm = false" x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+            x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm mx-4 w-full"
+                x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100">
+                <div class="text-center mb-4">
+                    <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                            </path>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-800">Cancel Document?</h3>
+                    <p class="text-sm text-gray-500 mt-1">This will reverse all ledger entries and stock movements. This
+                        action cannot be undone.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button type="button" @click="showConfirm = false"
+                        class="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold text-sm transition-all">
+                        Go Back
+                    </button>
+                    <form method="POST" action="{{ cancel_url }}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit"
+                            class="w-full py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-semibold text-sm transition-all shadow-lg shadow-red-500/20">
+                            Yes, Cancel
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <p class="text-xs text-center text-gray-400 font-medium">
+        Submitted documents cannot be edited. Cancel to amend.
+    </p>
+</div>
+
+{% elif doc_status == 'CANCELLED' %}
+{# ── CANCELLED: Read-only notice ── #}
+<div class="space-y-3">
+    <div
+        class="flex items-center justify-center w-full py-4 bg-gray-50 text-gray-400 rounded-2xl font-bold text-base border-2 border-dashed border-gray-200 gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z">
+            </path>
+        </svg>
+        Document Cancelled
+    </div>
+    <p class="text-xs text-center text-gray-400 font-medium">
+        This document has been cancelled. All ledger entries have been reversed.
+    </p>
+</div>
+{% endif %}

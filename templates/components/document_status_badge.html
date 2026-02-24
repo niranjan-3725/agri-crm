@@ -1,0 +1,29 @@
+{# Sprint 15: Reusable Document Status Badge #}
+{# Usage: {% include 'components/document_status_badge.html' with doc_status=invoice.status %} #}
+
+{% if doc_status == 'DRAFT' %}
+<span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide
+             bg-gray-100 text-gray-600 border border-gray-200">
+    <span class="relative flex h-2 w-2">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gray-400 opacity-75"></span>
+        <span class="relative inline-flex rounded-full h-2 w-2 bg-gray-500"></span>
+    </span>
+    Draft
+</span>
+{% elif doc_status == 'SUBMITTED' %}
+<span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide
+             bg-emerald-50 text-emerald-700 border border-emerald-200">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+    </svg>
+    Submitted
+</span>
+{% elif doc_status == 'CANCELLED' %}
+<span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide
+             bg-red-50 text-red-700 border border-red-200">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+    </svg>
+    Cancelled
+</span>
+{% endif %}

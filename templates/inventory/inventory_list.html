@@ -2,8 +2,7 @@
 {% load humanize %}
 
 {% block content %}
-<div class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]"
-     x-data="{ activeFilter: '{{ status|default:'' }}' }">
+<div class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]" x-data="{ activeFilter: '{{ status|default:'' }}' }">
 
     <!-- ============================================================ -->
     <!-- LEFT: Main Content Area                                        -->
@@ -48,10 +47,9 @@
             <div class="bg-white p-1.5 rounded-2xl border border-gray-100 inline-flex shadow-sm gap-1 flex-wrap">
 
                 <!-- All -->
-                <a href="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}"
-                    @click="activeFilter = ''"
-                    hx-get="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}"
-                    hx-target="#inventory-table" hx-push-url="true"
+                <a href="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}" @click="activeFilter = ''"
+                    hx-get="{% url 'inventory_list' %}{% if q %}?q={{ q }}{% endif %}" hx-target="#inventory-table"
+                    hx-push-url="true"
                     class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
                     :class="activeFilter === '' ? 'bg-gray-900 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'">
                     All
@@ -122,13 +120,24 @@
                         <div class="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">Total Stock Value
                         </div>
                         <div class="text-4xl font-bold tracking-tight mb-3">₹{{ total_stock_value|intcomma }}</div>
-                        <div
-                            class="flex items-center gap-2 text-sm font-medium text-blue-400 bg-blue-400/10 px-3 py-1.5 rounded-lg w-fit">
-                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path
-                                    d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                            </svg>
-                            {{ total_batch_count }} active batch{{ total_batch_count|pluralize:"es" }}
+                        <div class="flex flex-wrap items-center gap-2">
+                            <div
+                                class="flex items-center gap-2 text-sm font-medium text-blue-400 bg-blue-400/10 px-3 py-1.5 rounded-lg w-fit">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                </svg>
+                                {{ total_batch_count }} batch{{ total_batch_count|pluralize:"es" }}
+                            </div>
+                            <div
+                                class="flex items-center gap-2 text-sm font-medium text-violet-400 bg-violet-400/10 px-3 py-1.5 rounded-lg w-fit">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M3 21h18M5 21V7a8 8 0 0 1 2-2h10a8 8 0 0 1 2 2v14" />
+                                </svg>
+                                {{ warehouse_count }} warehouse{{ warehouse_count|pluralize:"s" }}
+                            </div>
                         </div>
                     </div>
                 </div>

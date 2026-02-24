@@ -4,84 +4,112 @@
     {% for batch in batches %}
     <div class="group bg-white rounded-2xl p-5 border border-gray-100
                 hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5
-                transition-all duration-200 flex flex-col md:flex-row items-start md:items-center gap-5">
+                transition-all duration-200 flex flex-col gap-4">
 
-        <!-- ── Product Info ── -->
-        <div class="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-4 gap-4 items-center w-full">
+        {# ── Row 1: Core Info ── #}
+        <div class="flex flex-col md:flex-row items-start md:items-center gap-5">
+            <div class="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-5 gap-4 items-center w-full">
 
-            <!-- Col 1: Product Name + Batch + Category -->
-            <div class="col-span-2 md:col-span-1">
-                <div class="font-bold text-gray-900 text-base">{{ batch.product.name }}</div>
-                <div class="text-xs text-gray-400 font-medium mt-0.5">Batch: {{ batch.batch_number }}</div>
-                <span
-                    class="inline-block mt-1.5 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold uppercase tracking-wide">
-                    {{ batch.product.category.name|default:"Uncategorised" }}
-                </span>
-            </div>
-
-            <!-- Col 2: Expiry Date -->
-            <div class="col-span-1">
-                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Expiry</div>
-                {% if not batch.expiry_date %}
-                <span
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-50 text-gray-500 border border-gray-100">
-                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
-                    No Expiry
-                </span>
-                {% elif batch.expiry_date < today %} <span
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-100">
-                    <span class="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
-                    {{ batch.expiry_date|date:"d M Y" }}
+                {# Col 1: Product Name + Batch + Category #}
+                <div class="col-span-2 md:col-span-1">
+                    <div class="font-bold text-gray-900 text-base">{{ batch.product.name }}</div>
+                    <div class="text-xs text-gray-400 font-medium mt-0.5">Batch: {{ batch.batch_number }}</div>
+                    <span
+                        class="inline-block mt-1.5 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold uppercase tracking-wide">
+                        {{ batch.product.category.name|default:"Uncategorised" }}
                     </span>
-                    <div class="text-[10px] text-red-400 font-bold mt-1">Expired</div>
-                    {% elif batch.days_to_expiry <= 30 %} <span
-                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
-                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                </div>
+
+                {# Col 2: Expiry Date #}
+                <div class="col-span-1">
+                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Expiry</div>
+                    {% if not batch.expiry_date %}
+                    <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-50 text-gray-500 border border-gray-100">
+                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
+                        No Expiry
+                    </span>
+                    {% elif batch.expiry_date < today %} <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-100">
+                        <span class="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
                         {{ batch.expiry_date|date:"d M Y" }}
                         </span>
-                        <div class="text-[10px] text-amber-500 font-bold mt-1">{{ batch.days_to_expiry }}d remaining
-                        </div>
+                        <div class="text-[10px] text-red-400 font-bold mt-1">Expired</div>
+                        {% elif batch.days_to_expiry <= 30 %} <span
+                            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                            {{ batch.expiry_date|date:"d M Y" }}
+                            </span>
+                            <div class="text-[10px] text-amber-500 font-bold mt-1">{{ batch.days_to_expiry }}d remaining
+                            </div>
+                            {% else %}
+                            <span
+                                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
+                                <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
+                                {{ batch.expiry_date|date:"d M Y" }}
+                            </span>
+                            {% endif %}
+                </div>
+
+                {# Col 3: Pricing + Moving Average #}
+                <div class="col-span-1">
+                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Price</div>
+                    <div class="text-sm font-bold text-gray-800">₹{{ batch.mrp|intcomma }}</div>
+                    <div class="text-xs text-blue-600 font-bold mt-0.5">Sell ₹{{ batch.base_selling_price|intcomma }}
+                    </div>
+                    {% if batch.product.moving_average_price %}
+                    <div class="text-[10px] text-violet-500 font-bold mt-1 flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6">
+                            </path>
+                        </svg>
+                        Avg ₹{{ batch.product.moving_average_price|intcomma }}
+                    </div>
+                    {% endif %}
+                </div>
+
+                {# Col 4: Stock Qty + Value #}
+                <div class="col-span-1">
+                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Stock</div>
+                    {% if batch.current_quantity == 0 %}
+                    <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                        <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
+                        Out of Stock
+                    </span>
+                    {% elif batch.current_quantity < 10 %} <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                        {{ batch.current_quantity }} (Low)
+                        </span>
                         {% else %}
                         <span
                             class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
                             <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
-                            {{ batch.expiry_date|date:"d M Y" }}
+                            {{ batch.current_quantity }} units
                         </span>
                         {% endif %}
-            </div>
+                        <div class="text-sm font-bold text-slate-700 mt-1.5">₹{{ batch.stock_value|intcomma }}</div>
+                        <div class="text-[10px] text-gray-400 font-medium">stock value</div>
+                </div>
 
-            <!-- Col 3: Pricing -->
-            <div class="col-span-1">
-                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Price</div>
-                <div class="text-sm font-bold text-gray-800">₹{{ batch.mrp|intcomma }}</div>
-                <div class="text-xs text-blue-600 font-bold mt-0.5">Sell ₹{{ batch.base_selling_price|intcomma }}</div>
-            </div>
-
-            <!-- Col 4: Stock Qty + Value -->
-            <div class="col-span-1">
-                <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Stock</div>
-                {% if batch.current_quantity == 0 %}
-                <span
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200">
-                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>
-                    Out of Stock
-                </span>
-                {% elif batch.current_quantity < 10 %} <span
-                    class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
-                    {{ batch.current_quantity }} (Low)
-                    </span>
-                    {% else %}
-                    <span
-                        class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
-                        <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"></span>
-                        {{ batch.current_quantity }} units
-                    </span>
+                {# Col 5: Warehouse Breakdown (Sprint 15) #}
+                <div class="col-span-1">
+                    <div class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Warehouses</div>
+                    {% for bin in batch.stock_bins.all %}
+                    {% if bin.actual_qty > 0 %}
+                    <div class="flex items-center gap-1.5 mb-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></span>
+                        <span class="text-xs font-medium text-gray-700 truncate">{{ bin.warehouse.name }}</span>
+                        <span class="text-xs font-bold text-indigo-600 ml-auto">{{ bin.actual_qty }}</span>
+                    </div>
                     {% endif %}
-                    <div class="text-sm font-bold text-slate-700 mt-1.5">₹{{ batch.stock_value|intcomma }}</div>
-                    <div class="text-[10px] text-gray-400 font-medium">stock value</div>
-            </div>
+                    {% empty %}
+                    <span class="text-[10px] text-gray-400 font-medium italic">No bin data</span>
+                    {% endfor %}
+                </div>
 
+            </div>
         </div>
 
     </div>
