@@ -13,8 +13,13 @@ from django.db import IntegrityError, connection
 from django.db.models import F
 from django.test import TestCase
 
-from inventory.models import Batch, StockBin, StockMovement
-from inventory.services import InsufficientStockError, get_default_warehouse, process_stock_movement
+from inventory.models import Batch, StockBin, StockMovement, Warehouse
+from inventory.services import (
+    InsufficientStockError,
+    get_default_warehouse,
+    process_stock_movement,
+    reconcile_stock,
+)
 from master_data.models import Category, Manufacturer, Product
 
 
@@ -221,3 +226,111 @@ class StockMovementServiceTests(TestCase):
 
         self.assertIsNotNone(m.created_at)
         self.assertEqual(m.quantity, 10)
+
+
+# ── Bug #1 Regression: StockReconciliation warehouse scope ─────────────
+
+
+class ReconcileStockWarehouseScopeTests(TestCase):
+    """Regression tests for Bug #1: reconcile_stock() must use per-warehouse
+    StockBin.actual_qty as the baseline, not the global Batch.current_quantity.
+
+    In a multi-warehouse setup the two values diverge.  The old code used
+    batch.current_quantity (global total), which produced a wrong delta and
+    crashed or corrupted stock for any warehouse-specific reconciliation.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.cat = Category.objects.create(
+            name='Recon Test Cat',
+            cgst_rate=Decimal('9.00'),
+            sgst_rate=Decimal('9.00'),
+        )
+        cls.mfr = Manufacturer.objects.create(name='Recon Mfr')
+        cls.product = Product.objects.create(
+            name='Recon Product',
+            hsn_code='38089190',
+            unit_type='Bag',
+            category=cls.cat,
+            manufacturer=cls.mfr,
+        )
+
+    def _make_batch(self, qty=0):
+        return Batch.objects.create(
+            product=self.product,
+            batch_number=f'RB-{Batch.objects.count()}',
+            purchase_price=Decimal('50.00'),
+            mrp=Decimal('80.00'),
+            base_selling_price=Decimal('70.00'),
+            current_quantity=qty,
+        )
+
+    def test_single_warehouse_reconcile_still_works(self):
+        """Single-warehouse reconcile: uses bin qty == global qty, result unchanged."""
+        batch = self._make_batch(qty=0)
+        wh = get_default_warehouse()
+        StockBin.objects.get_or_create(warehouse=wh, batch=batch, defaults={'actual_qty': 0})
+        process_stock_movement(batch.pk, 10, 'PurchaseReceipt', 1, wh.pk)
+
+        reconcile_stock(batch_id=batch.pk, new_quantity=8, warehouse_id=wh.pk)
+
+        bin_ = StockBin.objects.get(warehouse=wh, batch=batch)
+        batch.refresh_from_db()
+        self.assertEqual(bin_.actual_qty, 8)
+        self.assertEqual(batch.current_quantity, 8)
+
+    def test_multiwarehouse_reconcile_uses_bin_qty_not_global(self):
+        """Core regression: reconciling warehouse A must not use the global total.
+
+        Warehouse A: 10 units, Warehouse B: 20 units → global = 30.
+        Reconcile warehouse A to 8 (physical count found 2 missing).
+        Expected delta = 8 - 10 = -2 (NOT 8 - 30 = -22).
+        """
+        batch = self._make_batch(qty=0)
+        wh_a = Warehouse.objects.create(name='Recon WH-A')
+        wh_b = Warehouse.objects.create(name='Recon WH-B')
+        StockBin.objects.create(warehouse=wh_a, batch=batch, actual_qty=0)
+        StockBin.objects.create(warehouse=wh_b, batch=batch, actual_qty=0)
+
+        process_stock_movement(batch.pk, 10, 'PurchaseReceipt', 1, wh_a.pk)
+        process_stock_movement(batch.pk, 20, 'PurchaseReceipt', 2, wh_b.pk)
+
+        # Sanity check: global qty is 30 before reconciliation
+        batch.refresh_from_db()
+        self.assertEqual(batch.current_quantity, 30)
+
+        # Reconcile warehouse A to 8 — should remove 2 from wh_a, not 22
+        reconcile_stock(batch_id=batch.pk, new_quantity=8, warehouse_id=wh_a.pk)
+
+        bin_a = StockBin.objects.get(warehouse=wh_a, batch=batch)
+        bin_b = StockBin.objects.get(warehouse=wh_b, batch=batch)
+        batch.refresh_from_db()
+
+        self.assertEqual(bin_a.actual_qty, 8,
+                         "Warehouse A should be reconciled to 8, not crash to -12")
+        self.assertEqual(bin_b.actual_qty, 20,
+                         "Warehouse B must be untouched")
+        self.assertEqual(batch.current_quantity, 28,
+                         "Global cache must equal 8 (wh_a) + 20 (wh_b)")
+
+    def test_multiwarehouse_reconcile_does_not_raise_insufficient_stock(self):
+        """Regression: the buggy code tried to remove 22 from wh_a (had 10) and
+        would trigger InsufficientStockError.  The fix removes only 2."""
+        batch = self._make_batch(qty=0)
+        wh_a = Warehouse.objects.create(name='Recon WH-C')
+        wh_b = Warehouse.objects.create(name='Recon WH-D')
+        StockBin.objects.create(warehouse=wh_a, batch=batch, actual_qty=0)
+        StockBin.objects.create(warehouse=wh_b, batch=batch, actual_qty=0)
+
+        process_stock_movement(batch.pk, 10, 'PurchaseReceipt', 3, wh_a.pk)
+        process_stock_movement(batch.pk, 20, 'PurchaseReceipt', 4, wh_b.pk)
+
+        try:
+            reconcile_stock(batch_id=batch.pk, new_quantity=8, warehouse_id=wh_a.pk)
+        except InsufficientStockError:
+            self.fail(
+                "reconcile_stock raised InsufficientStockError — it incorrectly "
+                "computed delta against the global qty (30) instead of the "
+                "warehouse-specific bin qty (10)."
+            )

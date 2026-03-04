@@ -269,3 +269,187 @@ class Sprint9GlobalBalanceTest(TestCase):
             totals['total_credit'],
             f"GL unbalanced! Debits={totals['total_debit']}, Credits={totals['total_credit']}",
         )
+
+
+# ── Bug #3 Regression: reverse_document_gl audit trail ─────────────────
+
+
+class GLAuditTrailRegressionTests(TestCase):
+    """Regression tests for Bug #3: reverse_document_gl() must post reversing
+    entries instead of deleting originals.
+
+    Deleting originals destroyed the historical audit trail — any trial balance
+    computed *after* a cancellation was silently incorrect for every period that
+    contained the cancelled document.
+    """
+
+    def test_reverse_creates_mirror_entries_not_deletes(self):
+        """After reversal the entry count doubles; original rows are preserved."""
+        from django.db.models import Sum
+        from accounting.services import reverse_document_gl
+
+        entries = [
+            {'account_name': 'Accounts Receivable', 'debit': Decimal('500.00'), 'credit': Decimal('0.00')},
+            {'account_name': 'Sales Revenue',        'debit': Decimal('0.00'),   'credit': Decimal('500.00')},
+        ]
+        make_gl_entries('SalesInvoice', 9001, entries)
+        original_count = GLEntry.objects.filter(
+            reference_type='SalesInvoice', reference_id=9001
+        ).count()
+        self.assertEqual(original_count, 2)
+
+        reverse_document_gl('SalesInvoice', 9001)
+
+        all_rows = GLEntry.objects.filter(reference_type='SalesInvoice', reference_id=9001)
+        # Both original rows AND their reversals remain
+        self.assertEqual(all_rows.count(), original_count * 2,
+                         "reverse_document_gl must add reversing entries, not delete originals")
+
+        # Net balance is zero (originals and reversals cancel out)
+        net = all_rows.aggregate(d=Sum('debit'), c=Sum('credit'))
+        self.assertEqual(net['d'], net['c'],
+                         "After reversal the net debit must equal net credit")
+
+    def test_reversing_entry_swaps_debit_and_credit(self):
+        """Each reversing row must be the exact Dr/Cr mirror of its original."""
+        from accounting.services import reverse_document_gl
+
+        make_gl_entries('PurchaseInvoice', 9002, [
+            {'account_name': 'Stock Received But Not Billed', 'debit': Decimal('800.00'), 'credit': Decimal('0.00')},
+            {'account_name': 'Accounts Payable',              'debit': Decimal('0.00'),   'credit': Decimal('800.00')},
+        ])
+        reverse_document_gl('PurchaseInvoice', 9002)
+
+        rows = list(
+            GLEntry.objects.filter(reference_type='PurchaseInvoice', reference_id=9002)
+            .order_by('id')
+        )
+        self.assertEqual(len(rows), 4)
+        # rows[0] original SRNB debit 800; rows[2] reversal should be credit 800
+        self.assertEqual(rows[0].debit,  rows[2].credit)
+        self.assertEqual(rows[0].credit, rows[2].debit)
+        # rows[1] original AP credit 800; rows[3] reversal should be debit 800
+        self.assertEqual(rows[1].debit,  rows[3].credit)
+        self.assertEqual(rows[1].credit, rows[3].debit)
+
+    def test_reverse_on_empty_reference_is_noop(self):
+        """Calling reverse on a reference with no entries must not raise."""
+        from accounting.services import reverse_document_gl
+        # Should complete silently with no rows created
+        reverse_document_gl('SalesInvoice', 99999)
+        self.assertEqual(
+            GLEntry.objects.filter(reference_type='SalesInvoice', reference_id=99999).count(),
+            0,
+        )
+
+    def test_global_balance_intact_after_cancel(self):
+        """Global trial balance must stay zero-net after a reversal (Bug #3 guarantee)."""
+        from django.db.models import Sum
+        from accounting.services import reverse_document_gl
+
+        make_gl_entries('SalesInvoice', 9003, [
+            {'account_name': 'Accounts Receivable', 'debit': Decimal('236.00'), 'credit': Decimal('0.00')},
+            {'account_name': 'Sales Revenue',        'debit': Decimal('0.00'),   'credit': Decimal('200.00')},
+            {'account_name': 'CGST Payable',         'debit': Decimal('0.00'),   'credit': Decimal('18.00')},
+            {'account_name': 'SGST Payable',         'debit': Decimal('0.00'),   'credit': Decimal('18.00')},
+        ])
+        reverse_document_gl('SalesInvoice', 9003)
+
+        totals = GLEntry.objects.aggregate(d=Sum('debit'), c=Sum('credit'))
+        self.assertEqual(totals['d'], totals['c'],
+                         "Global ledger must remain balanced after reversal")
+
+
+# ── Bug #2 Regression: CGST/SGST decimal guard (confirming it is correct) ─
+
+
+class GLDecimalPrecisionRegressionTests(TestCase):
+    """Regression tests confirming that post_purchase_invoice_gl() correctly
+    handles odd-cent total_tax values via its existing rounding guard
+    (total_sgst = total_tax - total_cgst).
+
+    These tests document and protect the existing behaviour — they would
+    catch any future regression that breaks the guard.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from master_data.models import Supplier
+
+        self.cat = Category.objects.create(
+            name='Dec Prec Cat', cgst_rate=Decimal('9.00'), sgst_rate=Decimal('9.00'),
+        )
+        self.mfr = Manufacturer.objects.create(name='Dec Prec Mfr')
+        self.product = Product.objects.create(
+            name='Dec Prec Product', category=self.cat,
+            unit_type='Kg', manufacturer=self.mfr,
+        )
+        self.supplier = Supplier.objects.create(name='Dec Prec Supplier')
+        self.batch = Batch.objects.create(
+            product=self.product, batch_number='DP_B001',
+            current_quantity=0,
+            purchase_price=Decimal('100.00'),
+            base_selling_price=Decimal('150.00'),
+            mrp=Decimal('200.00'),
+        )
+        wh = get_default_warehouse()
+        StockBin.objects.get_or_create(warehouse=wh, batch=self.batch, defaults={'actual_qty': 0})
+
+    def _post_purchase_gl(self, total_tax_str, total_amount_str):
+        """Create a minimal invoice and call the GL posting function directly."""
+        from datetime import date
+        from decimal import Decimal as D
+        from transactions.models import PurchaseInvoice, PurchaseItem
+        from accounting.services import post_purchase_invoice_gl
+
+        inv_num = f'DP-INV-{PurchaseInvoice.objects.count()}'
+        invoice = PurchaseInvoice.objects.create(
+            supplier=self.supplier,
+            invoice_number=inv_num,
+            date=date.today(),
+            total_amount=D(total_amount_str),
+        )
+        PurchaseItem.objects.create(
+            invoice=invoice,
+            batch=self.batch,
+            quantity=1,
+            basic_rate=D(total_amount_str) - D(total_tax_str),
+            tax_amount=D(total_tax_str),
+            selling_price=D('150.00'),
+            profit_margin=D('20.00'),
+            total_amount=D(total_amount_str),
+        )
+        return invoice, post_purchase_invoice_gl(invoice)
+
+    def _assert_gl_balanced(self, invoice):
+        from django.db.models import Sum
+        entries = GLEntry.objects.filter(
+            reference_type='PurchaseInvoice', reference_id=invoice.id,
+        )
+        net = entries.aggregate(d=Sum('debit'), c=Sum('credit'))
+        self.assertEqual(net['d'], net['c'],
+                         f"GL unbalanced for invoice {invoice.invoice_number}: "
+                         f"Dr={net['d']}, Cr={net['c']}")
+
+    def test_even_tax_is_balanced(self):
+        """Standard case: ₹180.00 tax splits evenly into ₹90 / ₹90."""
+        invoice, _ = self._post_purchase_gl('180.00', '1180.00')
+        self._assert_gl_balanced(invoice)
+
+    def test_odd_cent_tax_is_balanced(self):
+        """Edge case: ₹3.03 tax → CGST=₹1.52, SGST=₹1.51 — still balanced."""
+        invoice, _ = self._post_purchase_gl('3.03', '103.03')
+        self._assert_gl_balanced(invoice)
+
+    def test_single_paise_tax_is_balanced(self):
+        """Smallest possible odd tax: ₹0.01 → CGST=₹0.01, SGST=₹0.00."""
+        invoice, _ = self._post_purchase_gl('0.01', '100.01')
+        self._assert_gl_balanced(invoice)
+
+    def test_all_odd_paise_boundary_cases(self):
+        """Parametric: all boundary values that could expose a rounding split failure."""
+        for tax in ('1.01', '3.03', '5.05', '9.99', '99.99'):
+            total = str(Decimal('1000.00') + Decimal(tax))
+            with self.subTest(total_tax=tax):
+                invoice, _ = self._post_purchase_gl(tax, total)
+                self._assert_gl_balanced(invoice)

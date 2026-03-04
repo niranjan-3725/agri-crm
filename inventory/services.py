@@ -236,8 +236,22 @@ def reconcile_stock(
         warehouse_id = get_default_warehouse().id
 
     with transaction.atomic():
+        # Lock the batch row for global cache consistency.
         batch = Batch.objects.select_for_update().get(pk=batch_id)
-        previous_quantity = batch.current_quantity
+
+        # Read the *warehouse-specific* quantity, not the global Batch cache.
+        # Batch.current_quantity is the sum across ALL warehouses; using it as
+        # the baseline for a per-warehouse reconciliation produces a wrong delta
+        # in any multi-warehouse setup (Bug #1).
+        try:
+            stock_bin = StockBin.objects.select_for_update().get(
+                batch_id=batch_id, warehouse_id=warehouse_id,
+            )
+            previous_quantity = stock_bin.actual_qty
+        except StockBin.DoesNotExist:
+            # Warehouse has never held this batch — treat as zero.
+            previous_quantity = 0
+
         delta = new_quantity - previous_quantity
 
         recon = StockReconciliation.objects.create(

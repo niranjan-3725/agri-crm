@@ -212,15 +212,37 @@ def post_sales_invoice_gl(invoice) -> list[GLEntry]:
 
 
 def reverse_document_gl(reference_type: str, reference_id: int) -> None:
-    """Delete all GL entries for a given document reference.
+    """Post reversing GL entries for a cancelled document.
+
+    Creates a mirror entry (debit/credit swapped) for every original GL row
+    on this document.  The originals are **not deleted** — the complete ledger
+    history is preserved for audit and regulatory compliance.  The net balance
+    for every account touched by this document becomes zero.
 
     Used when cancelling an invoice to reverse its AR/AP/Tax GL postings.
-    The stock-level GL reversal is handled separately by post_stock_gl.
+    The stock-level GL reversal is handled separately by ``post_stock_gl()``.
     """
-    GLEntry.objects.filter(
-        reference_type=reference_type,
-        reference_id=reference_id,
-    ).delete()
+    originals = list(
+        GLEntry.objects.filter(
+            reference_type=reference_type,
+            reference_id=reference_id,
+        )
+    )
+    if not originals:
+        return
+
+    reversing = [
+        GLEntry(
+            account=entry.account,
+            debit=entry.credit,   # Swap: original credit becomes the reversing debit
+            credit=entry.debit,   # Swap: original debit  becomes the reversing credit
+            reference_type=reference_type,
+            reference_id=reference_id,
+            remarks=f"Reversal of GL entry #{entry.pk}",
+        )
+        for entry in originals
+    ]
+    GLEntry.objects.bulk_create(reversing)
 
 
 def post_purchase_invoice_gl(invoice) -> list[GLEntry]:
