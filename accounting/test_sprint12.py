@@ -130,7 +130,14 @@ class Sprint12SalesInvoiceGLTests(TestCase):
                          f"Unbalanced! Dr={total_debit}, Cr={total_credit}")
 
     def test_cancel_reverses_ar_entries(self):
-        """Cancelling a submitted invoice removes AR/Revenue/Tax GL entries."""
+        """Cancelling a submitted invoice creates reversing AR/Revenue/Tax GL entries.
+
+        After the fix (Bug #3), reverse_document_gl() posts mirror entries instead
+        of deleting originals.  The net debit == net credit for the document, but
+        both the original and reversing rows remain for audit compliance.
+        """
+        from django.db.models import Sum
+
         invoice = self._create_sales_invoice(
             taxable=Decimal('100.00'),
             cgst=Decimal('9.00'),
@@ -139,21 +146,23 @@ class Sprint12SalesInvoiceGLTests(TestCase):
             qty=1,
         )
         invoice.submit()
-        self.assertTrue(
-            GLEntry.objects.filter(
-                reference_type='SalesInvoice', reference_id=invoice.id,
-                account__name='Accounts Receivable'
-            ).exists()
-        )
+        original_count = GLEntry.objects.filter(
+            reference_type='SalesInvoice', reference_id=invoice.id
+        ).count()
+        self.assertGreater(original_count, 0)
 
         invoice.cancel()
 
-        # AR entries should be removed (stock cancel entries remain under a different ref type)
-        self.assertFalse(
-            GLEntry.objects.filter(
-                reference_type='SalesInvoice', reference_id=invoice.id
-            ).exists()
+        # Reversing entries added — total is now double the original count
+        all_entries = GLEntry.objects.filter(
+            reference_type='SalesInvoice', reference_id=invoice.id
         )
+        self.assertEqual(all_entries.count(), original_count * 2)
+
+        # Net balance for the document is zero (originals + reversals cancel out)
+        net = all_entries.aggregate(net_dr=Sum('debit'), net_cr=Sum('credit'))
+        self.assertEqual(net['net_dr'], net['net_cr'],
+                         "Cancelled invoice GL entries must net to zero")
 
     def test_zero_total_creates_no_ar_entries(self):
         """A zero-value invoice should produce no AR GL entries."""
@@ -250,7 +259,13 @@ class Sprint12PurchaseInvoiceGLTests(TestCase):
                          f"Unbalanced! Dr={total_debit}, Cr={total_credit}")
 
     def test_cancel_reverses_ap_entries(self):
-        """Cancelling a submitted purchase removes AP/Tax GL entries."""
+        """Cancelling a submitted purchase creates reversing AP/Tax GL entries.
+
+        After the fix (Bug #3), reverse_document_gl() preserves originals and adds
+        reversing rows.  Net debit == net credit; the ledger history is intact.
+        """
+        from django.db.models import Sum
+
         invoice = self._create_purchase_invoice(
             basic_rate=Decimal('100.00'),
             tax_amount=Decimal('180.00'),
@@ -258,13 +273,21 @@ class Sprint12PurchaseInvoiceGLTests(TestCase):
             qty=10,
         )
         invoice.submit()
+        original_count = GLEntry.objects.filter(
+            reference_type='PurchaseInvoice', reference_id=invoice.id
+        ).count()
+        self.assertGreater(original_count, 0)
+
         invoice.cancel()
 
-        self.assertFalse(
-            GLEntry.objects.filter(
-                reference_type='PurchaseInvoice', reference_id=invoice.id
-            ).exists()
+        all_entries = GLEntry.objects.filter(
+            reference_type='PurchaseInvoice', reference_id=invoice.id
         )
+        self.assertEqual(all_entries.count(), original_count * 2)
+
+        net = all_entries.aggregate(net_dr=Sum('debit'), net_cr=Sum('credit'))
+        self.assertEqual(net['net_dr'], net['net_cr'],
+                         "Cancelled purchase invoice GL entries must net to zero")
 
 
 class Sprint12CustomerPaymentGLTests(TestCase):
@@ -499,11 +522,13 @@ class Sprint12FullLifecycleGLTest(TestCase):
         sale.submit()
         sale.cancel()
 
-        # No SalesInvoice GL entries should remain (AR reversed)
-        self.assertEqual(
-            GLEntry.objects.filter(reference_type='SalesInvoice', reference_id=sale.id).count(),
-            0,
-        )
+        # After Bug #3 fix: SalesInvoice entries exist as original + reversing pairs
+        # (not deleted). Net balance for the document is zero.
+        si_entries = GLEntry.objects.filter(reference_type='SalesInvoice', reference_id=sale.id)
+        self.assertTrue(si_entries.exists(), "Reversing entries must exist after cancel")
+        si_net = si_entries.aggregate(net_dr=Sum('debit'), net_cr=Sum('credit'))
+        self.assertEqual(si_net['net_dr'], si_net['net_cr'],
+                         "Cancelled SalesInvoice GL must net to zero")
 
         # Sprint 13: Cancel stock entries are on DeliveryNote, not SalesInvoice
         self.assertTrue(
