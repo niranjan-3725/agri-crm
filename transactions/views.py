@@ -1294,8 +1294,12 @@ def create_purchase(request):
                 invoice.payment_status = payment_status
                 invoice.amount_paid = amount_paid
                 invoice.save()
-                
-                return redirect('purchase_list')
+
+                messages.success(
+                    request,
+                    f"Draft saved successfully. Review the details below and click Submit to update stock and ledger."
+                )
+                return redirect('purchase_detail', pk=invoice.pk)
 
         except ValidationError as e:
             return render(request, 'transactions/purchase_form.html', {
