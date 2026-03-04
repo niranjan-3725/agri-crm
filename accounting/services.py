@@ -226,7 +226,7 @@ def reverse_document_gl(reference_type: str, reference_id: int) -> None:
         GLEntry.objects.filter(
             reference_type=reference_type,
             reference_id=reference_id,
-        )
+        ).order_by('pk')  # Deterministic order so reversals mirror originals 1-for-1
     )
     if not originals:
         return

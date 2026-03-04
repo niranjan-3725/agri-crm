@@ -1,0 +1,98 @@
+{# Sprint 20: Reusable ERP Document Header Component #}
+{#                                                    #}
+{# Usage (from a document detail template):          #}
+{#   {% url 'purchase_list' as back_url %}           #}
+{#   {% include 'components/document_header.html'    #}
+{#     with                                          #}
+{#       back_url=back_url                           #}
+{#       back_label="Back to Ledger"                 #}
+{#       doc_type_label="Purchase Invoice"           #}
+{#       doc_number=invoice.invoice_number           #}
+{#       doc_title=invoice.supplier.name             #}
+{#       doc_status=invoice.status                   #}
+{#       payment_status=invoice.payment_status       #}
+{#   %}                                              #}
+{#                                                   #}
+{# All parameters except back_url and doc_title are  #}
+{# optional; omit payment_status for non-payment     #}
+{# documents (e.g. Purchase Orders, Receipts).       #}
+
+<div class="flex flex-col space-y-4 mb-10">
+
+    {# ── Breadcrumb / Back Link ── #}
+    {% if back_url %}
+    <a href="{{ back_url }}"
+        class="group flex items-center gap-2 text-gray-400 hover:text-gray-900 transition-colors w-fit mb-1">
+        <svg class="w-4 h-4 group-hover:-translate-x-1 transition-transform"
+            xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 18-6-6 6-6" />
+        </svg>
+        <span class="text-xs font-bold uppercase tracking-widest">
+            {{ back_label|default:"Back" }}
+        </span>
+    </a>
+    {% endif %}
+
+    {# ── Document Type + Number Pill ── #}
+    {% if doc_type_label %}
+    <div class="flex items-center gap-2">
+        <span class="text-gray-400 text-sm font-bold uppercase tracking-wider">
+            {{ doc_type_label }}
+        </span>
+        {% if doc_number %}
+        <span class="text-gray-300">•</span>
+        <span class="text-gray-400 text-sm font-bold uppercase tracking-wider">
+            #{{ doc_number }}
+        </span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# ── Title Row: Document Name + Status Badges ── #}
+    <div class="flex items-center justify-between flex-wrap gap-3">
+        <h1 class="text-5xl font-bold tracking-tight text-gray-900">{{ doc_title }}</h1>
+
+        <div class="flex items-center gap-2 flex-wrap">
+
+            {# Document lifecycle status (DRAFT / SUBMITTED / CANCELLED) #}
+            {% if doc_status %}
+            {% include 'components/document_status_badge.html' with doc_status=doc_status %}
+            {% endif %}
+
+            {# Payment status — only rendered when the variable is present #}
+            {% if payment_status == 'PAID' %}
+            <span class="px-4 py-1.5 bg-green-50 text-green-700 rounded-full text-sm font-bold
+                         tracking-wide border border-green-100 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M5 13l4 4L19 7"></path>
+                </svg>
+                Paid
+            </span>
+            {% elif payment_status == 'PARTIAL' %}
+            <span class="px-4 py-1.5 bg-amber-50 text-amber-700 rounded-full text-sm font-bold
+                         tracking-wide border border-amber-100 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Partially Paid
+            </span>
+            {% elif payment_status == 'UNPAID' %}
+            <span class="px-4 py-1.5 bg-red-50 text-red-700 rounded-full text-sm font-bold
+                         tracking-wide border border-red-100 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667
+                             1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34
+                             16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                Unpaid
+            </span>
+            {% endif %}
+
+        </div>
+    </div>
+</div>

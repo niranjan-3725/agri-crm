@@ -216,11 +216,16 @@ class Sprint16TaxExclusiveValuationTest(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, 'CANCELLED')
 
-        # After cancel: PI GL wiped, PR GL wiped via PurchaseReceiptCancel
-        pi_gl_count = GLEntry.objects.filter(
+        # After cancel: PI GL has reversing entries (originals preserved, doubled).
+        # Bug #3 fix: reverse_document_gl() posts mirror entries instead of deleting.
+        pi_gl_entries = GLEntry.objects.filter(
             reference_type='PurchaseInvoice', reference_id=invoice.pk,
-        ).count()
-        self.assertEqual(pi_gl_count, 0, "PI GL should be wiped after cancel")
+        )
+        pi_gl_count = pi_gl_entries.count()
+        self.assertGreater(pi_gl_count, 0, "PI GL entries must be preserved after cancel (audit trail)")
+        # Net balance of the PI GL must be zero (originals + reversals cancel out)
+        net = pi_gl_entries.aggregate(d=Sum('debit'), c=Sum('credit'))
+        self.assertEqual(net['d'], net['c'], "PI GL net must be zero after cancel")
 
         # Batch quantity back to 0
         batch.refresh_from_db()

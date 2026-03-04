@@ -1295,24 +1295,23 @@ def create_purchase(request):
                 invoice.amount_paid = amount_paid
                 invoice.save()
 
-                messages.success(
-                    request,
-                    f"Draft saved successfully. Review the details below and click Submit to update stock and ledger."
-                )
+                # Sprint 20: Redirect to the DRAFT detail page so the user
+                # can review the invoice and explicitly click "Submit".
+                # Saving ≠ submitting — no stock or GL impact until submit().
                 return redirect('purchase_detail', pk=invoice.pk)
 
         except ValidationError as e:
             return render(request, 'transactions/purchase_form.html', {
-                'suppliers': suppliers, 
-                'categories': categories, 
-                'manufacturers': manufacturers, 
+                'suppliers': suppliers,
+                'categories': categories,
+                'manufacturers': manufacturers,
                 'error': e.message
             })
         except Exception as e:
             return render(request, 'transactions/purchase_form.html', {
-                'suppliers': suppliers, 
-                'categories': categories, 
-                'manufacturers': manufacturers, 
+                'suppliers': suppliers,
+                'categories': categories,
+                'manufacturers': manufacturers,
                 'error': str(e)
             })
     existing_items = []
