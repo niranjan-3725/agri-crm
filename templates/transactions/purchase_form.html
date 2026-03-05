@@ -131,6 +131,10 @@
                 this.supplierSearch = s.name;
                 this.supplierOpen = false;
                 this.supplierTouched = true;
+                this.$nextTick(() => {
+                    const inv = document.querySelector('[name="invoice_number"]');
+                    if (inv) inv.focus();
+                });
             },
 
             addRow() {
@@ -158,13 +162,17 @@
                 } catch (e) { console.error('Search failed', e); }
             },
 
-            selectProduct(row, item) {
+            selectProduct(row, item, rowIndex) {
                 row.product_id = item.id;
                 row.product_name = item.name;
                 row.product_tax_rate = item.tax_rate;
                 row.showDropdown = false;
                 row.touched.product = true;
                 this.calculateRow(row);
+                this.$nextTick(() => {
+                    const batchInputs = document.querySelectorAll('[name="batch_number[]"]');
+                    if (batchInputs[rowIndex]) batchInputs[rowIndex].focus();
+                });
             },
 
             calculateRow(row) {
@@ -352,22 +360,32 @@
                         <input type="hidden" name="supplier" x-model="supplierId">
                         <input type="text" x-model="supplierSearch"
                             @focus="supplierOpen = true"
-                            @blur="supplierTouched = true; supplierOpen = false"
+                            @blur="supplierTouched = true; if (!supplierId) { supplierSearch = ''; supplierOpen = false }"
                             @click.away="supplierOpen = false"
                             class="w-full bg-white hover:bg-gray-50 focus:bg-white border text-gray-900 text-base font-medium rounded-2xl block px-5 py-4 transition-all duration-200 outline-none shadow-sm placeholder-gray-300"
-                            :class="(supplierTouched || submitAttempted) && !supplierId
-                                ? 'border-red-400 bg-red-50/50 focus:border-red-400'
-                                : 'border-gray-100 focus:border-blue-400/40 focus:shadow-lg focus:shadow-blue-500/5'"
+                            :class="supplierId
+                                ? 'border-blue-300 bg-blue-50/30 focus:border-blue-400/40 focus:shadow-lg focus:shadow-blue-500/5'
+                                : (supplierTouched || submitAttempted) && !supplierId
+                                    ? 'border-red-400 bg-red-50/50 focus:border-red-400'
+                                    : 'border-gray-100 focus:border-blue-400/40 focus:shadow-lg focus:shadow-blue-500/5'"
                             placeholder="Search suppliers..." autocomplete="off">
-                        <svg class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none"
+                        <!-- Search icon: shown until a supplier is confirmed -->
+                        <svg x-show="!supplierId" class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none"
                             width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="11" cy="11" r="8"></circle>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
+                        <!-- Checkmark icon: shown once supplier is confirmed -->
+                        <svg x-show="supplierId" x-cloak class="absolute right-5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none"
+                            width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6L9 17l-5-5"/>
+                        </svg>
 
                         <!-- Supplier Dropdown -->
                         <div x-show="supplierOpen"
+                            @mousedown.prevent
                             class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl z-30 max-h-64 overflow-y-auto"
                             style="display: none;">
                             <template x-for="s in filteredSuppliers" :key="s.id">
@@ -467,21 +485,24 @@
                                             <input type="text" x-model="row.product_name"
                                                 @input.debounce.300ms="searchProducts(row)"
                                                 @focus="row.showDropdown = true"
-                                                @blur="row.touched.product = true; $nextTick(() => { if (!row.product_id) row.showDropdown = false })"
+                                                @blur="row.touched.product = true; if (!row.product_id) { row.product_name = ''; row.showDropdown = false }"
                                                 @click.away="row.showDropdown = false"
                                                 name="product_name[]"
                                                 class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-blue-700"
-                                                :class="(row.touched.product || submitAttempted) && !row.product_id
-                                                    ? 'border-red-400 bg-red-50/50 focus:border-red-400'
-                                                    : 'border-transparent bg-gray-50/50 hover:bg-blue-50/50 focus:bg-white focus:border-blue-400/40'"
+                                                :class="row.product_id
+                                                    ? 'border-blue-300 bg-blue-50/30 focus:border-blue-400/40'
+                                                    : (row.touched.product || submitAttempted) && !row.product_id
+                                                        ? 'border-red-400 bg-red-50/50 focus:border-red-400'
+                                                        : 'border-transparent bg-gray-50/50 hover:bg-blue-50/50 focus:bg-white focus:border-blue-400/40'"
                                                 placeholder="Product name" autocomplete="off">
 
                                             <!-- Product Search Dropdown -->
                                             <div x-show="row.showDropdown"
+                                                @mousedown.prevent
                                                 class="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto"
                                                 style="display: none;">
                                                 <template x-for="p in row.searchResults" :key="p.id">
-                                                    <div @click="selectProduct(row, p)"
+                                                    <div @click="selectProduct(row, p, i)"
                                                         class="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50">
                                                         <div class="flex justify-between items-center">
                                                             <span class="font-medium text-sm text-gray-900" x-text="p.name"></span>

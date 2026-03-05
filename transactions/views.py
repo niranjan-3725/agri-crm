@@ -989,9 +989,9 @@ def purchase_edit(request, pk):
                 selling_prices = request.POST.getlist('selling_price[]')
                 margins = request.POST.getlist('margin[]')
                 quantities = request.POST.getlist('qty[]')
-                
+
                 grand_total = 0
-                
+
                 for i in range(len(product_names)):
                     product_name = product_names[i]
                     if not product_name: continue
@@ -1195,9 +1195,13 @@ def create_purchase(request):
                 selling_prices = request.POST.getlist('selling_price[]')
                 margins = request.POST.getlist('margin[]')
                 quantities = request.POST.getlist('qty[]')
-                
+
+                # Guard: reject submissions that contain no filled product rows
+                if not any(n.strip() for n in product_names):
+                    raise ValidationError("At least one product item is required.")
+
                 grand_total = 0
-                
+
                 for i in range(len(product_names)):
                     p_name = product_names[i]
                     if not p_name: continue
