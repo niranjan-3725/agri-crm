@@ -588,6 +588,34 @@ class PurchaseItem(models.Model):
         related_name='invoice_items'
     )
 
+    def clean(self):
+        """Mirror the UI price constraints as a DB-level safety net."""
+        from django.core.exceptions import ValidationError
+        errors = {}
+
+        # Basic Rate vs Selling Price (fields we own directly)
+        if self.basic_rate and self.selling_price:
+            if self.selling_price < self.basic_rate:
+                errors['selling_price'] = (
+                    f"Selling Price (₹{self.selling_price}) cannot be less than Basic Rate (₹{self.basic_rate})."
+                )
+
+        # Basic Rate and Selling Price vs MRP (via related Batch)
+        if self.batch_id:
+            batch_mrp = getattr(self.batch, 'mrp', None)
+            if batch_mrp:
+                if self.basic_rate and self.basic_rate > batch_mrp:
+                    errors['basic_rate'] = (
+                        f"Basic Rate (₹{self.basic_rate}) cannot exceed MRP (₹{batch_mrp})."
+                    )
+                if self.selling_price and self.selling_price > batch_mrp:
+                    errors.setdefault('selling_price',
+                        f"Selling Price (₹{self.selling_price}) cannot exceed MRP (₹{batch_mrp})."
+                    )
+
+        if errors:
+            raise ValidationError(errors)
+
     def __str__(self):
         return f"{self.quantity} x {self.batch} in {self.invoice}"
 

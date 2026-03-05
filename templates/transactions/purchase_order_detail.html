@@ -73,8 +73,7 @@
     </div>
 
     <div class='flex flex-wrap gap-4 p-6 bg-gray-50 rounded-2xl border border-gray-100'>
-        {% include 'components/document_actions.html' with doc_status=po.status submit_url='submit_purchase_order'
-        cancel_url='cancel_purchase_order' doc_id=po.pk %}
+        {% include 'components/document_actions.html' with doc_status=po.status submit_url='submit_purchase_order' cancel_url='cancel_purchase_order' doc_id=po.pk %}
 
         {% if po.status == 'SUBMITTED' %}
         {% if po.per_received < 100 %} <a href='{% url "create_purchase_receipt" %}?purchase_order_id={{ po.pk }}'

@@ -68,7 +68,7 @@
                 </div>
                 <div class="space-y-1">
                     <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Date</p>
-                    <p class="text-xl font-bold text-gray-900">{{ invoice.date }}</p>
+                    <p class="text-xl font-bold text-gray-900">{{ invoice.date|date:"d M Y" }}</p>
                 </div>
                 <!-- Supplier Info -->
                 <div class="space-y-1 md:col-span-2">
@@ -82,7 +82,6 @@
                 </div>
             </div>
 
-            {# Sprint 15: Linked Documents #}
             {# Sprint 15: Linked Documents #}
             {% if invoice.purchase_receipt or invoice.purchase_order %}
             <div class="mt-6 pt-6 border-t border-gray-100 flex flex-col gap-3">
@@ -168,9 +167,8 @@
                                 <p class="text-base font-bold text-gray-900">{{ item.quantity }}</p>
                             </div>
                             <div class="bg-blue-50/50 p-2 rounded-lg border border-blue-100">
-                                <p class="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Tax-Exclusive
-                                    Base Rate</p>
-                                <p class="text-base font-bold text-blue-900">₹{{ item.basic_rate }}</p>
+                                <p class="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Base Rate <span class="normal-case font-medium">(ex-tax)</span></p>
+                                <p class="text-base font-bold text-blue-900">₹{{ item.basic_rate|floatformat:2 }}</p>
                             </div>
                             <div>
                                 <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tax Amount</p>
@@ -234,8 +232,7 @@
         </div>
 
         {# Sprint 15: Ledger Timeline #}
-        {% include 'components/ledger_timeline.html' with gl_entries=gl_entries stock_movements=stock_movements
-        gl_total_debit=gl_total_debit gl_total_credit=gl_total_credit %}
+        {% include 'components/ledger_timeline.html' with gl_entries=gl_entries stock_movements=stock_movements gl_total_debit=gl_total_debit gl_total_credit=gl_total_credit %}
 
     </div>
 
@@ -378,8 +375,7 @@
 
             {# Sprint 15: ERP Action Controls Footer #}
             <div class="p-8 border-t border-gray-100 bg-white/80 backdrop-blur-md z-50 flex-shrink-0">
-                {% include 'components/document_actions.html' with doc_status=invoice.status submit_url=submit_url
-                cancel_url=cancel_url edit_url=edit_url %}
+                {% include 'components/document_actions.html' with doc_status=invoice.status submit_url=submit_url cancel_url=cancel_url edit_url=edit_url %}
             </div>
         </div>
     </div>
