@@ -659,7 +659,7 @@
                                             :class="submitAttempted && !(parseFloat(row.qty) > 0)
                                                 ? 'border-red-500 focus:border-red-500 focus:ring-red-100'
                                                 : 'border-transparent hover:border-blue-200 focus:border-blue-500'"
-                                            placeholder="1" min="0.001">
+                                            placeholder="1" min="1">
                                         <input type="hidden" :value="row.net_cost" name="net_cost[]">
                                         <!-- Hidden Net Cost -->
                                     </div>
