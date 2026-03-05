@@ -1215,7 +1215,22 @@ def create_purchase(request):
                     qty = int(quantities[i]) if quantities[i] else 0
                     sell_price = float(selling_prices[i]) if selling_prices[i] else mrp
                     margin_val = float(margins[i]) if i < len(margins) and margins[i] else 0
-                    
+
+                    # ── Backend price integrity safety net ────────────────────
+                    row_label = f"Item {i+1} ({p_name})"
+                    if mrp > 0 and rate_pre_tax > mrp:
+                        raise ValidationError(
+                            f"{row_label}: Basic Rate (₹{rate_pre_tax:.2f}) cannot exceed MRP (₹{mrp:.2f})."
+                        )
+                    if mrp > 0 and sell_price > mrp:
+                        raise ValidationError(
+                            f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot exceed MRP (₹{mrp:.2f})."
+                        )
+                    if rate_pre_tax > 0 and sell_price > 0 and sell_price < rate_pre_tax:
+                        raise ValidationError(
+                            f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot be less than Basic Rate (₹{rate_pre_tax:.2f})."
+                        )
+
                     # Tax Calculation
                     tax_rate = float(product.category.total_tax)
                     tax_amount_per_unit = rate_pre_tax * (tax_rate / 100)
