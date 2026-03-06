@@ -37,14 +37,16 @@ class Quotation(models.Model):
     def submit(self):
         if self.status != 'DRAFT':
             raise ValidationError("Only draft documents can be submitted.")
-        self.status = 'SUBMITTED'
-        self.save()
+        with transaction.atomic():
+            self.status = 'SUBMITTED'
+            self.save()
 
     def cancel(self):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
-        self.status = 'CANCELLED'
-        self.save()
+        with transaction.atomic():
+            self.status = 'CANCELLED'
+            self.save()
 
     def delete(self, *args, **kwargs):
         if self.status != 'DRAFT':
@@ -110,14 +112,16 @@ class SalesOrder(models.Model):
     def submit(self):
         if self.status != 'DRAFT':
             raise ValidationError("Only draft documents can be submitted.")
-        self.status = 'SUBMITTED'
-        self.save()
+        with transaction.atomic():
+            self.status = 'SUBMITTED'
+            self.save()
 
     def cancel(self):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
-        self.status = 'CANCELLED'
-        self.save()
+        with transaction.atomic():
+            self.status = 'CANCELLED'
+            self.save()
 
     def delete(self, *args, **kwargs):
         if self.status != 'DRAFT':
@@ -687,17 +691,32 @@ class SalesInvoice(models.Model):
         return f"Sales {self.invoice_number} to {self.customer}"
 
     def submit(self):
-        """Sprint 13: Transition DRAFT → SUBMITTED.
+        """Transition DRAFT → SUBMITTED with three atomic announcements.
 
-        Auto-creates and submits a DeliveryNote (stock movement)
-        if one is not already linked, then posts AR/Revenue/Tax GL.
+        Announcement 1 — Stock fulfillment (DeliveryNote):
+            Dr  Stock Delivered But Not Billed   MAP × qty
+            Cr  Stock In Hand                    MAP × qty
+
+        Announcement 2 — SDNB clearance (COGS recognition):
+            Dr  Cost of Goods Sold               MAP × qty
+            Cr  Stock Delivered But Not Billed   MAP × qty
+
+        Announcement 3 — Revenue / AR / Tax:
+            Dr  Accounts Receivable              grand_total
+            Cr  Sales Revenue                    taxable_amount
+            Cr  CGST Payable                     cgst
+            Cr  SGST Payable                     sgst
+
+        SDNB nets to zero once the invoice is submitted.
+        All three are wrapped in a single transaction.atomic() so any
+        failure rolls back the entire operation.
         """
-        from accounting.services import post_sales_invoice_gl
+        from accounting.services import post_sales_invoice_gl, post_sdnb_clearance_gl
         if self.status != 'DRAFT':
             raise ValidationError("Only draft documents can be submitted.")
 
         with transaction.atomic():
-            # Sprint 13: Auto-create fulfillment if not already linked
+            # ── Announcement 1: Stock fulfillment ───────────────────────────
             if not self.delivery_note:
                 dn = DeliveryNote.objects.create(
                     customer=self.customer,
@@ -711,17 +730,28 @@ class SalesInvoice(models.Model):
                         quantity=item.quantity,
                         sales_order_item=item.sales_order_item,
                     )
-                dn.submit()
+                dn.submit()           # Posts: Dr SDNB / Cr Stock In Hand
                 self.delivery_note = dn
 
-            # Sprint 14: Update SO item billed_qty
+            # ── Announcement 2: SDNB clearance (COGS recognition) ──────────
+            post_sdnb_clearance_gl(self.delivery_note, self.id)
+
+            # ── Announcement 3: Revenue / AR / Tax ─────────────────────────
+            post_sales_invoice_gl(self)
+
+            # ── SO tracking: update billed_qty with over-billing guard ──────
             for item in self.items.all():
                 if item.sales_order_item:
-                    item.sales_order_item.billed_qty += item.quantity
-                    item.sales_order_item.save(update_fields=['billed_qty'])
+                    so_item = item.sales_order_item
+                    new_billed = so_item.billed_qty + item.quantity
+                    if new_billed > so_item.quantity:
+                        raise ValidationError(
+                            f"Over-billing: {item.batch} — attempting to bill "
+                            f"{new_billed} units but only {so_item.quantity} ordered."
+                        )
+                    so_item.billed_qty = new_billed
+                    so_item.save(update_fields=['billed_qty'])
 
-            # Sprint 12: Post AR/Revenue/Tax accounting entries (no stock here)
-            post_sales_invoice_gl(self)
             self.status = 'SUBMITTED'
             self.save()
 

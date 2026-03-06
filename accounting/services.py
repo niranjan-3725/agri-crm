@@ -83,10 +83,12 @@ def make_gl_entries(
 
 GL_ROUTING = {
     # Sprint 13: Fulfillment documents handle stock GL
-    'PurchaseReceipt':       ('Stock In Hand', 'Stock Received But Not Billed'),
-    'PurchaseReceiptCancel': ('Stock Received But Not Billed', 'Stock In Hand'),
-    'DeliveryNote':          ('Cost of Goods Sold', 'Stock In Hand'),
-    'DeliveryNoteCancel':    ('Stock In Hand', 'Cost of Goods Sold'),
+    'PurchaseReceipt':       ('Stock In Hand',                  'Stock Received But Not Billed'),
+    'PurchaseReceiptCancel': ('Stock Received But Not Billed',  'Stock In Hand'),
+    # DeliveryNote parks in SDNB (temp asset); COGS is only recognised when
+    # SalesInvoice.submit() calls post_sdnb_clearance_gl() to clear it.
+    'DeliveryNote':          ('Stock Delivered But Not Billed', 'Stock In Hand'),
+    'DeliveryNoteCancel':    ('Stock In Hand',                  'Stock Delivered But Not Billed'),
 
     # Legacy: kept for backward compatibility with existing StockMovement records
     'PurchaseInvoice':       ('Stock In Hand', 'Stock Received But Not Billed'),
@@ -208,6 +210,46 @@ def post_sales_invoice_gl(invoice) -> list[GLEntry]:
         reference_id=invoice.id,
         entries=entries,
         remarks=f"Sales Invoice #{invoice.invoice_number}: AR {grand_total}",
+    )
+
+
+def post_sdnb_clearance_gl(delivery_note, sales_invoice_id: int) -> list[GLEntry]:
+    """Clear the SDNB account when a DeliveryNote is billed via a SalesInvoice.
+
+    Called inside SalesInvoice.submit() *after* the DeliveryNote has been
+    submitted.  The COGS value is derived from the StockMovement valuation
+    snapshots so it matches exactly what was posted to SDNB at delivery time.
+
+    Dr  Cost of Goods Sold                cogs_value
+    Cr  Stock Delivered But Not Billed    cogs_value
+
+    Both legs are tagged to the SalesInvoice so reverse_document_gl() picks
+    them up automatically on cancel.
+    """
+    from inventory.models import StockMovement
+
+    movements = StockMovement.objects.filter(
+        reference_document_type='DeliveryNote',
+        reference_document_id=delivery_note.id,
+    )
+
+    cogs_value = sum(
+        abs(m.quantity) * m.valuation_rate
+        for m in movements
+    )
+    cogs_value = Decimal(str(cogs_value)).quantize(Decimal('0.01'))
+
+    if cogs_value == 0:
+        return []
+
+    return make_gl_entries(
+        reference_type='SalesInvoice',
+        reference_id=sales_invoice_id,
+        entries=[
+            {'account_name': 'Cost of Goods Sold',               'debit': cogs_value,       'credit': Decimal('0.00')},
+            {'account_name': 'Stock Delivered But Not Billed',   'debit': Decimal('0.00'),  'credit': cogs_value},
+        ],
+        remarks=f"SDNB clearance: DN#{delivery_note.id} → SI#{sales_invoice_id}",
     )
 
 
