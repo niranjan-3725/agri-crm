@@ -26,9 +26,10 @@ def search_products(request):
         
     if request.GET.get('format') == 'json':
         data = [{
-            'id': p.id, 
+            'id': p.id,
             'name': p.name,
-            'tax_rate': float(p.category.total_tax) if p.category else 0
+            'tax_rate': float(p.category.total_tax) if p.category else 0,
+            'moving_average_price': float(p.moving_average_price) if p.moving_average_price else 0,
         } for p in products]
         return JsonResponse(data, safe=False)
         
@@ -313,8 +314,8 @@ def create_sale(request):
                         payment_mode='CASH', # Default for quick sale
                         notes='Initial Payment via Sales Form'
                     )
-                
-                return redirect('dashboard')
+
+                return redirect('invoice_detail', pk=invoice.id)
                 
         except ValidationError as e:
             customers = Customer.objects.all()
