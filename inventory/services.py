@@ -256,6 +256,7 @@ def reconcile_stock(
 
         recon = StockReconciliation.objects.create(
             batch=batch,
+            warehouse_id=warehouse_id,   # INV-03: persist which bin was counted
             previous_quantity=previous_quantity,
             new_quantity=new_quantity,
             reason=reason,

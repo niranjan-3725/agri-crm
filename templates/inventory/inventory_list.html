@@ -65,6 +65,16 @@
                     Low Stock
                 </a>
 
+                <!-- Expiring Soon (INV-07: new tab, correct status=expiring) -->
+                <a href="{% url 'inventory_list' %}?status=expiring{% if q %}&q={{ q }}{% endif %}"
+                    @click="activeFilter = 'expiring'"
+                    hx-get="{% url 'inventory_list' %}?status=expiring{% if q %}&q={{ q }}{% endif %}"
+                    hx-target="#inventory-table" hx-push-url="true"
+                    class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-200 cursor-pointer"
+                    :class="activeFilter === 'expiring' ? 'bg-orange-500 text-white shadow-md' : 'text-orange-600 hover:bg-orange-50'">
+                    Expiring Soon
+                </a>
+
                 <!-- Expired -->
                 <a href="{% url 'inventory_list' %}?status=expired{% if q %}&q={{ q }}{% endif %}"
                     @click="activeFilter = 'expired'"
@@ -119,7 +129,8 @@
                     <div class="relative z-10">
                         <div class="text-gray-400 text-xs font-bold uppercase tracking-widest mb-1">Total Stock Value
                         </div>
-                        <div class="text-4xl font-bold tracking-tight mb-3">₹{{ total_stock_value|intcomma }}</div>
+                        <div class="text-4xl font-bold tracking-tight mb-1">₹{{ total_stock_value|intcomma }}</div>
+                        <div class="text-[10px] text-blue-300/80 font-medium mb-2">Based on Moving Average Price</div>
                         <div class="flex flex-wrap items-center gap-2">
                             <div
                                 class="flex items-center gap-2 text-sm font-medium text-blue-400 bg-blue-400/10 px-3 py-1.5 rounded-lg w-fit">
@@ -182,8 +193,8 @@
                             <p class="text-red-600/70 text-xs font-medium">batch{{ expiring_soon_count|pluralize:"es" }}
                                 within 30 days</p>
                         </div>
-                        <a href="{% url 'inventory_list' %}?status=expired"
-                            class="text-red-500 hover:text-red-700 transition-colors shrink-0" title="View Expired">
+                        <a href="{% url 'inventory_list' %}?status=expiring"
+                            class="text-red-500 hover:text-red-700 transition-colors shrink-0" title="View Expiring Soon">
                             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                 <path d="M9 5l7 7-7 7" />
                             </svg>

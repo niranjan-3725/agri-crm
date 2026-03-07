@@ -27,7 +27,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='batch',
-            constraint=models.CheckConstraint(check=models.Q(('current_quantity__gte', 0)), name='batch_non_negative_stock'),
+            constraint=models.CheckConstraint(condition=models.Q(('current_quantity__gte', 0)), name='batch_non_negative_stock'),
         ),
         migrations.AddField(
             model_name='stockmovement',

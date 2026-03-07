@@ -48,7 +48,7 @@ class Batch(models.Model):
         unique_together = ('product', 'batch_number', 'mrp')
         constraints = [
             models.CheckConstraint(
-                check=models.Q(current_quantity__gte=0),
+                condition=models.Q(current_quantity__gte=0),
                 name='batch_non_negative_stock',
             ),
         ]
@@ -86,7 +86,7 @@ class StockBin(models.Model):
         unique_together = ('warehouse', 'batch')
         constraints = [
             models.CheckConstraint(
-                check=models.Q(actual_qty__gte=0),
+                condition=models.Q(actual_qty__gte=0),
                 name='stockbin_non_negative_qty',
             ),
         ]
@@ -165,6 +165,16 @@ class StockReconciliation(models.Model):
         Batch,
         on_delete=models.PROTECT,
         related_name='reconciliations',
+    )
+    # INV-03: Captures WHICH warehouse was physically counted.
+    # Nullable for backward compatibility with existing rows created before Sprint 15.
+    warehouse = models.ForeignKey(
+        Warehouse,
+        on_delete=models.PROTECT,
+        related_name='reconciliations',
+        null=True,
+        blank=True,
+        help_text="Warehouse where the physical stock count was performed.",
     )
     previous_quantity = models.IntegerField(
         help_text="System quantity at the time of reconciliation.",
