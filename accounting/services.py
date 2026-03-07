@@ -336,7 +336,15 @@ def post_supplier_payment_gl(payment) -> list[GLEntry]:
     Reversal / Debit Note (amount < 0):
         Dr  Cash / Bank           |amount|
         Cr  Accounts Payable      |amount|
+
+    Note: DEBIT_NOTE mode payments are intentionally skipped here.
+    Their full GL (Dr AP | Cr Purchase Returns | Cr GST Input Recoverable)
+    is posted by ``post_purchase_return_gl()`` inside PurchaseReturn.submit().
     """
+    # DEBIT_NOTE settlements are handled by post_purchase_return_gl() — skip.
+    if payment.payment_mode == 'DEBIT_NOTE':
+        return []
+
     amount = Decimal(str(payment.amount))
     if amount == 0:
         return []
@@ -359,5 +367,171 @@ def post_supplier_payment_gl(payment) -> list[GLEntry]:
         reference_id=payment.id,
         entries=entries,
         remarks=f"Supplier Payment #{payment.id}: {payment.payment_mode} {amount}",
+    )
+
+
+# ── Returns Module: Credit Note & Debit Note GL ────────────────────────
+
+
+def post_sales_return_gl(sales_return) -> list[GLEntry]:
+    """Post the full Credit Note GL when a Sales Return is submitted.
+
+    Reverses the income-statement and AR impact of the original sale for
+    the specific items being returned:
+
+        Dr  Sales Returns (contra-revenue)   total_net
+        Dr  CGST Payable                     total_cgst   (tax liability reduced)
+        Dr  SGST Payable                     total_sgst
+        Cr  Accounts Receivable              total_gross  (AR balance reduced)
+
+    Tax rates are sourced from the original SalesItem on the linked invoice.
+    If the return is freeform (no original_sale), tax reversal is skipped
+    and only the net amount is posted against AR.
+
+    The inventory-side GL (Dr Stock In Hand | Cr COGS) is handled
+    separately by post_stock_gl() called from process_stock_movement().
+    """
+    from transactions.models import SalesItem
+
+    total_net = Decimal('0.00')
+    total_cgst = Decimal('0.00')
+    total_sgst = Decimal('0.00')
+
+    for return_item in sales_return.items.select_related('batch').all():
+        # Determine per-unit net price and tax rate for this item.
+        per_unit_net = Decimal('0.00')
+        tax_rate = Decimal('0.00')
+
+        if sales_return.original_sale_id:
+            invoice_item = (
+                SalesItem.objects
+                .filter(
+                    invoice_id=sales_return.original_sale_id,
+                    batch=return_item.batch,
+                )
+                .first()
+            )
+            if invoice_item:
+                per_unit_net = Decimal(str(invoice_item.unit_price))
+                tax_rate = Decimal(str(invoice_item.tax_rate))
+
+        # Fall back to stored unit_price_at_invoice if available.
+        if per_unit_net == Decimal('0.00') and return_item.unit_price_at_invoice:
+            per_unit_net = Decimal(str(return_item.unit_price_at_invoice))
+
+        qty = Decimal(str(return_item.quantity))
+        item_net = per_unit_net * qty
+        item_tax = (item_net * tax_rate / 100).quantize(Decimal('0.01'))
+        item_cgst = (item_tax / 2).quantize(Decimal('0.01'))
+        item_sgst = item_tax - item_cgst
+
+        total_net += item_net
+        total_cgst += item_cgst
+        total_sgst += item_sgst
+
+    total_gross = total_net + total_cgst + total_sgst
+
+    if total_gross == Decimal('0.00'):
+        return []
+
+    entries = [
+        {'account_name': 'Sales Returns',      'debit': total_net,   'credit': Decimal('0.00')},
+        {'account_name': 'CGST Payable',        'debit': total_cgst,  'credit': Decimal('0.00')},
+        {'account_name': 'SGST Payable',        'debit': total_sgst,  'credit': Decimal('0.00')},
+        {'account_name': 'Accounts Receivable', 'debit': Decimal('0.00'), 'credit': total_gross},
+    ]
+    # Remove zero-value tax lines (e.g. zero-rated goods or freeform returns)
+    entries = [e for e in entries if e['debit'] != 0 or e['credit'] != 0]
+
+    inv_ref = (
+        f"Inv #{sales_return.original_sale.invoice_number}"
+        if sales_return.original_sale_id
+        else "Freeform"
+    )
+    return make_gl_entries(
+        reference_type='SalesReturn',
+        reference_id=sales_return.id,
+        entries=entries,
+        remarks=f"Credit Note — SalesReturn #{sales_return.id} ({inv_ref})",
+    )
+
+
+def post_purchase_return_gl(purchase_return) -> list[GLEntry]:
+    """Post the full Debit Note GL when a Purchase Return is submitted.
+
+    Reverses the AP and purchase-expense impact of the original purchase
+    for the specific items being returned to the supplier:
+
+        Dr  Accounts Payable              total_gross  (AP balance reduced)
+        Cr  Purchase Returns (contra-exp) total_net
+        Cr  CGST Input Recoverable        total_cgst   (input tax reclaimed)
+        Cr  SGST Input Recoverable        total_sgst
+
+    Tax rates are derived from the original PurchaseItem on the linked
+    invoice (tax_amount / (basic_rate * quantity) × 100).  If the return
+    is freeform (no original_invoice), tax recovery is skipped.
+
+    The inventory-side GL (Dr SRNB | Cr Stock In Hand) is handled
+    separately by post_stock_gl() called from process_stock_movement().
+    """
+    from transactions.models import PurchaseItem
+
+    total_net = Decimal('0.00')
+    total_cgst = Decimal('0.00')
+    total_sgst = Decimal('0.00')
+
+    for return_item in purchase_return.items.select_related('batch').all():
+        per_unit_net = Decimal(str(return_item.refund_price))
+        tax_rate = Decimal('0.00')
+
+        if purchase_return.original_invoice_id:
+            invoice_item = (
+                PurchaseItem.objects
+                .filter(
+                    invoice_id=purchase_return.original_invoice_id,
+                    batch=return_item.batch,
+                )
+                .first()
+            )
+            if invoice_item and invoice_item.basic_rate and invoice_item.quantity:
+                invoice_base = Decimal(str(invoice_item.basic_rate)) * invoice_item.quantity
+                if invoice_base > 0:
+                    tax_rate = (
+                        Decimal(str(invoice_item.tax_amount)) / invoice_base * 100
+                    ).quantize(Decimal('0.01'))
+
+        qty = Decimal(str(return_item.quantity))
+        item_net = per_unit_net * qty
+        item_tax = (item_net * tax_rate / 100).quantize(Decimal('0.01'))
+        item_cgst = (item_tax / 2).quantize(Decimal('0.01'))
+        item_sgst = item_tax - item_cgst
+
+        total_net += item_net
+        total_cgst += item_cgst
+        total_sgst += item_sgst
+
+    total_gross = total_net + total_cgst + total_sgst
+
+    if total_gross == Decimal('0.00'):
+        return []
+
+    entries = [
+        {'account_name': 'Accounts Payable',        'debit': total_gross, 'credit': Decimal('0.00')},
+        {'account_name': 'Purchase Returns',         'debit': Decimal('0.00'), 'credit': total_net},
+        {'account_name': 'CGST Input Recoverable',  'debit': Decimal('0.00'), 'credit': total_cgst},
+        {'account_name': 'SGST Input Recoverable',  'debit': Decimal('0.00'), 'credit': total_sgst},
+    ]
+    entries = [e for e in entries if e['debit'] != 0 or e['credit'] != 0]
+
+    inv_ref = (
+        f"Inv #{purchase_return.original_invoice.invoice_number}"
+        if purchase_return.original_invoice_id
+        else "Freeform"
+    )
+    return make_gl_entries(
+        reference_type='PurchaseReturn',
+        reference_id=purchase_return.id,
+        entries=entries,
+        remarks=f"Debit Note — PurchaseReturn #{purchase_return.id} ({inv_ref})",
     )
 
