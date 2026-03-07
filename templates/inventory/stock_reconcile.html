@@ -1,0 +1,270 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="min-h-screen bg-[#F8F9FA]">
+<main class="max-w-2xl mx-auto p-6 md:p-10 lg:p-12 space-y-8 animate-fade-in">
+
+    {# ── Breadcrumb ── #}
+    <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+        <a href="{% url 'inventory_list' %}" class="hover:text-blue-600 transition-colors">Inventory</a>
+        <span>•</span>
+        <a href="{% url 'batch_detail' batch.id %}" class="hover:text-blue-600 transition-colors">
+            {{ batch.product.name }}
+        </a>
+        <span>•</span>
+        <span class="bg-emerald-50 text-emerald-600 px-2 py-1 rounded">Reconcile</span>
+    </div>
+
+    {# ── Page Header ── #}
+    <header>
+        <h1 class="text-4xl font-bold text-gray-900 tracking-tight">Stock Reconciliation</h1>
+        <p class="text-gray-400 mt-1 font-medium">
+            Physical count for
+            <span class="text-gray-700 font-bold">{{ batch.product.name }}</span>
+            · Batch <span class="text-gray-700 font-bold">{{ batch.batch_number }}</span>
+        </p>
+    </header>
+
+    {# ── Batch Summary (read-only) ── #}
+    <div class="bg-white rounded-2xl border border-gray-100 p-5">
+        <div class="grid grid-cols-3 gap-4 text-center">
+            <div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">MRP</div>
+                <div class="text-lg font-bold text-gray-800 mt-0.5">₹{{ batch.mrp|intcomma }}</div>
+            </div>
+            <div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">MAP Cost</div>
+                <div class="text-lg font-bold text-violet-600 mt-0.5">
+                    ₹{{ batch.product.moving_average_price|floatformat:2|intcomma }}
+                </div>
+            </div>
+            <div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total (All Bins)</div>
+                <div class="text-lg font-bold text-gray-800 mt-0.5">{{ batch.current_quantity }} units</div>
+            </div>
+        </div>
+    </div>
+
+    {# ═══════════════════════════════════════════════════════════════════════ #}
+    {# Reconciliation Form — Alpine.js reactive delta preview (Pattern 5)    #}
+    {# JSON injected via <script> so double-quotes never break x-data attr.  #}
+    {# ═══════════════════════════════════════════════════════════════════════ #}
+    <script>
+      window._reconBinQtys    = {{ bin_quantities_json|safe }};
+      window._reconFirstWhId  = '{{ warehouses.0.id|default:"" }}';
+    </script>
+
+    <div x-data="reconForm()">
+
+        <form method="post" @submit="submitting = true" class="space-y-5">
+            {% csrf_token %}
+
+            {# ── Warehouse Selector ── #}
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
+                    Warehouse Being Counted
+                </label>
+                <select name="warehouse_id"
+                        x-model="warehouseId"
+                        class="w-full bg-white border-2 border-gray-100 focus:border-blue-500/30
+                               rounded-xl py-3 px-4 font-medium text-gray-900 outline-none transition-all
+                               appearance-none cursor-pointer">
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}{% if wh.location %} — {{ wh.location }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+                {# Show current system qty for selected warehouse #}
+                <div class="mt-1.5 text-xs text-gray-400 font-medium">
+                    System quantity in this warehouse:
+                    <span class="font-bold text-gray-700" x-text="prevQty + ' units'"></span>
+                </div>
+            </div>
+
+            {# ── New Physical Count — with live delta preview ── #}
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
+                    Physical Count (New Quantity)
+                </label>
+
+                {# Input — border animates to blue-tint when valid change detected (Verified State) #}
+                <input type="number" name="new_quantity" min="0"
+                       x-model="newQty"
+                       placeholder="Enter physical count..."
+                       :class="hasValidInput && !isNoChange
+                                 ? 'border-blue-500/40 bg-blue-50/30'
+                                 : 'border-gray-100 bg-white'"
+                       class="w-full border-2 focus:border-blue-500/30 rounded-xl
+                              py-3 px-4 font-bold text-gray-900 text-lg outline-none transition-all
+                              placeholder-gray-300">
+
+                {# ── Live Delta Preview ── #}
+                <div class="mt-2 min-h-[1.5rem]">
+
+                    {# Addition — emerald #}
+                    <div x-show="isAddition" x-transition
+                         class="flex items-center gap-2 text-sm font-bold text-emerald-600">
+                        <div class="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center shrink-0">
+                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+                            </svg>
+                        </div>
+                        <span x-text="'+' + delta + ' units will be added to stock'"></span>
+                    </div>
+
+                    {# Removal — orange #}
+                    <div x-show="isRemoval" x-transition
+                         class="flex items-center gap-2 text-sm font-bold text-orange-600">
+                        <div class="w-5 h-5 bg-orange-100 rounded-full flex items-center justify-center shrink-0">
+                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                            </svg>
+                        </div>
+                        <span x-text="delta + ' units will be removed from stock'"></span>
+                    </div>
+
+                    {# No change — gray #}
+                    <div x-show="isNoChange" x-transition
+                         class="flex items-center gap-2 text-sm font-bold text-gray-400">
+                        <div class="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center shrink-0">
+                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"/>
+                            </svg>
+                        </div>
+                        <span>Quantity confirmed — no movement will be posted</span>
+                    </div>
+
+                </div>
+            </div>
+
+            {# ── Reason ── #}
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
+                    Reason
+                </label>
+                <select name="reason"
+                        class="w-full bg-white border-2 border-gray-100 focus:border-blue-500/30
+                               rounded-xl py-3 px-4 font-medium text-gray-900 outline-none transition-all
+                               appearance-none cursor-pointer">
+                    {% for value, label in reason_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# ── Notes ── #}
+            <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
+                    Notes <span class="font-normal text-gray-400 normal-case">(optional)</span>
+                </label>
+                <textarea name="notes" rows="2"
+                          placeholder="e.g. Counted during monthly audit by warehouse team..."
+                          class="w-full bg-white border-2 border-gray-100 focus:border-blue-500/30
+                                 rounded-xl py-3 px-4 font-medium text-gray-900 outline-none
+                                 transition-all placeholder-gray-300 resize-none">
+                </textarea>
+            </div>
+
+            {# ── Submit ── #}
+            <div class="flex items-center gap-3 pt-1">
+
+                {# Submit — active only when a valid qty is entered #}
+                <button type="submit"
+                        :disabled="!hasValidInput || submitting"
+                        :class="hasValidInput && !submitting
+                                  ? 'bg-gray-900 text-white hover:bg-gray-700 cursor-pointer'
+                                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'"
+                        class="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl
+                               font-bold text-sm transition-all duration-200">
+
+                    {# Spinner when submitting #}
+                    <svg x-show="submitting" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                        <path class="opacity-75" fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg>
+
+                    {# Checkmark when hasChange #}
+                    <svg x-show="hasValidInput && !isNoChange && !submitting"
+                         class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                    </svg>
+
+                    <span x-text="submitting ? 'Confirming...' : (isNoChange ? 'Confirm Count' : 'Submit Adjustment')"></span>
+                </button>
+
+                <a href="{% url 'batch_detail' batch.id %}"
+                   class="px-5 py-3.5 rounded-xl font-bold text-sm text-gray-500
+                          bg-white border-2 border-gray-100 hover:border-gray-200
+                          hover:text-gray-700 transition-all">
+                    Cancel
+                </a>
+            </div>
+
+        </form>
+    </div>
+
+    {# ── Past Reconciliations ── #}
+    {% if past_reconciliations %}
+    <section class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-50">
+            <h2 class="font-bold text-gray-900 text-sm">Previous Reconciliations</h2>
+        </div>
+        <div class="divide-y divide-gray-50">
+            {% for recon in past_reconciliations %}
+            <div class="px-6 py-3.5 flex items-center justify-between">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-bold text-gray-800">
+                            {{ recon.previous_quantity }} → {{ recon.new_quantity }}
+                        </span>
+                        {% if recon.delta > 0 %}
+                        <span class="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">+{{ recon.delta }}</span>
+                        {% elif recon.delta < 0 %}
+                        <span class="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">{{ recon.delta }}</span>
+                        {% else %}
+                        <span class="text-xs font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">±0</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-[10px] text-gray-400 font-medium mt-0.5">
+                        {{ recon.get_reason_display }}
+                        {% if recon.warehouse %} · {{ recon.warehouse.name }}{% endif %}
+                    </div>
+                </div>
+                <div class="text-[10px] text-gray-400 font-medium text-right">
+                    {{ recon.created_at|date:"d M Y" }}<br>
+                    <span class="text-gray-300">{{ recon.created_at|time:"H:i" }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+</main>
+</div>
+
+<script>
+function reconForm() {
+    return {
+        warehouseQtys: window._reconBinQtys  || {},
+        warehouseId:   window._reconFirstWhId || '',
+        newQty:        '',
+        submitting:    false,
+
+        get prevQty() {
+            var id = String(this.warehouseId);
+            return (this.warehouseQtys[id] !== undefined) ? this.warehouseQtys[id] : 0;
+        },
+        get delta() {
+            if (this.newQty === '' || isNaN(parseInt(this.newQty))) return null;
+            return parseInt(this.newQty) - this.prevQty;
+        },
+        get isAddition()    { return this.delta !== null && this.delta > 0; },
+        get isRemoval()     { return this.delta !== null && this.delta < 0; },
+        get isNoChange()    { return this.delta === 0; },
+        get hasValidInput() { return this.delta !== null; }
+    };
+}
+</script>
+{% endblock %}

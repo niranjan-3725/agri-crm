@@ -166,6 +166,16 @@ class StockReconciliation(models.Model):
         on_delete=models.PROTECT,
         related_name='reconciliations',
     )
+    # INV-03: Captures WHICH warehouse was physically counted.
+    # Nullable for backward compatibility with existing rows created before Sprint 15.
+    warehouse = models.ForeignKey(
+        Warehouse,
+        on_delete=models.PROTECT,
+        related_name='reconciliations',
+        null=True,
+        blank=True,
+        help_text="Warehouse where the physical stock count was performed.",
+    )
     previous_quantity = models.IntegerField(
         help_text="System quantity at the time of reconciliation.",
     )
