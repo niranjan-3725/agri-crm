@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import timedelta
 from django.db import models, transaction
+from django.db.models import Sum
 from django.core.exceptions import ValidationError
 
 from django.utils import timezone
