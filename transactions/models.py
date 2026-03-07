@@ -568,11 +568,14 @@ class SupplierPayment(models.Model):
         is_new = self._state.adding
         super().save(*args, **kwargs)
         if is_new:
-            from accounting.services import post_supplier_payment_gl
-            post_supplier_payment_gl(self)
+            # DEBIT_NOTE is handled by post_purchase_return_gl() in
+            # PurchaseReturn.submit(). Skip here to avoid a duplicate/wrong entry.
+            if self.payment_mode != 'DEBIT_NOTE':
+                from accounting.services import post_supplier_payment_gl
+                post_supplier_payment_gl(self)
 
     def __str__(self):
-        return f"Payment {self.amount} for {self.invoice.invoice_number}"
+        return f"Payment {self.amount} for {self.invoice.invoice_number if self.invoice else 'N/A'}"
 
 class PurchaseItem(models.Model):
     invoice = models.ForeignKey(PurchaseInvoice, related_name='items', on_delete=models.CASCADE)
@@ -834,24 +837,79 @@ class PurchaseReturn(models.Model):
 
     status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
 
+    def _validate_return_quantities(self):
+        """BUG-03 / Pattern 1: Server-side over-return guard.
+
+        Called inside submit()'s atomic block, BEFORE any stock movement.
+        Ensures that the total returned quantity (across all submitted returns
+        for this invoice + batch) never exceeds the original invoiced quantity.
+
+        Freeform returns (no original_invoice) are not capped — they are
+        bounded by available stock, which process_stock_movement() enforces
+        via InsufficientStockError.
+        """
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                f"Cannot submit: document is already '{self.status}'."
+            )
+        if not self.original_invoice_id:
+            return  # Freeform — stock cap is sufficient
+
+        for item in self.items.select_related('batch').all():
+            already_submitted = (
+                PurchaseReturnItem.objects
+                .filter(
+                    return_invoice__original_invoice_id=self.original_invoice_id,
+                    return_invoice__status='SUBMITTED',
+                    batch=item.batch,
+                )
+                .exclude(return_invoice=self)
+                .aggregate(total=Sum('quantity'))['total']
+            ) or 0
+
+            invoiced_qty = (
+                PurchaseItem.objects
+                .filter(
+                    invoice_id=self.original_invoice_id,
+                    batch=item.batch,
+                )
+                .aggregate(total=Sum('quantity'))['total']
+            ) or 0
+
+            remaining = invoiced_qty - already_submitted
+            if item.quantity > remaining:
+                raise ValidationError(
+                    f"Over-return on '{item.batch}': "
+                    f"only {remaining} unit(s) remain returnable "
+                    f"(invoiced {invoiced_qty}, already returned {already_submitted})."
+                )
+
     def submit(self):
         from inventory.services import process_stock_movement
-        if self.status != 'DRAFT':
-            raise ValidationError("Only draft documents can be submitted.")
+        from accounting.services import post_purchase_return_gl
 
         with transaction.atomic():
+            # Pattern 1: state guard + over-return guard (atomic boundary)
+            self._validate_return_quantities()
+
             for item in self.items.all():
                 process_stock_movement(
                     batch_id=item.batch.id,
                     quantity=-item.quantity,
                     doc_type='PurchaseReturn',
                     doc_id=self.id,
+                    warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
+            # Pattern 2: full Debit Note GL (Dr AP | Cr Purchase Returns | Cr GST)
+            post_purchase_return_gl(self)
+
             self.status = 'SUBMITTED'
-            self.save()
+            self.save(update_fields=['status'])
 
     def cancel(self):
         from inventory.services import process_stock_movement
+        from accounting.services import reverse_document_gl
+
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
@@ -862,11 +920,15 @@ class PurchaseReturn(models.Model):
                     quantity=item.quantity,
                     doc_type='PurchaseReturnCancel',
                     doc_id=self.id,
+                    warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
+            # Reverse the Debit Note GL entries posted at submit time
+            reverse_document_gl('PurchaseReturn', self.id)
+
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()
             self.status = 'CANCELLED'
-            self.save()
+            self.save(update_fields=['status'])
 
     def delete(self, *args, **kwargs):
         if self.status != 'DRAFT':
@@ -883,6 +945,14 @@ class PurchaseReturnItem(models.Model):
     batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
     quantity = models.IntegerField()
     refund_price = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # BUG-07 fix / Pattern 2: Which warehouse does stock leave from?
+    warehouse = models.ForeignKey(
+        'inventory.Warehouse',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        help_text="Warehouse stock leaves from. Defaults to primary warehouse if blank.",
+    )
 
     def __str__(self):
         return f"Return {self.quantity} x {self.batch}"
@@ -925,8 +995,13 @@ class CustomerPayment(models.Model):
         is_new = self._state.adding
         super().save(*args, **kwargs)
         if is_new:
-            from accounting.services import post_customer_payment_gl
-            post_customer_payment_gl(self)
+            # SALES_RETURN and WALLET_CREDIT do not generate a Cash↔AR entry here.
+            # The full Credit Note GL (Dr Sales Returns | Cr AR) is posted by
+            # post_sales_return_gl() inside SalesReturn.submit() instead,
+            # keeping GL posting in sync with the SUBMITTED state transition.
+            if self.payment_mode not in ('SALES_RETURN', 'WALLET_CREDIT'):
+                from accounting.services import post_customer_payment_gl
+                post_customer_payment_gl(self)
 
     def __str__(self):
         if self.invoice:
@@ -944,24 +1019,78 @@ class SalesReturn(models.Model):
 
     status = models.CharField(max_length=20, choices=DOCUMENT_STATUS_CHOICES, default='DRAFT')
 
+    def _validate_return_quantities(self):
+        """BUG-03 / Pattern 1: Server-side over-return guard.
+
+        Called inside submit()'s atomic block, BEFORE any stock movement.
+        Ensures that total returned quantity (across all SUBMITTED returns
+        for this invoice + batch) never exceeds the original invoiced quantity.
+
+        Freeform returns (no original_sale) are not capped here — they are
+        bounded by physical stock, which process_stock_movement() enforces.
+        """
+        if self.status != 'DRAFT':
+            raise ValidationError(
+                f"Cannot submit: document is already '{self.status}'."
+            )
+        if not self.original_sale_id:
+            return  # Freeform — stock cap is sufficient
+
+        for item in self.items.select_related('batch').all():
+            already_submitted = (
+                SalesReturnItem.objects
+                .filter(
+                    return_invoice__original_sale_id=self.original_sale_id,
+                    return_invoice__status='SUBMITTED',
+                    batch=item.batch,
+                )
+                .exclude(return_invoice=self)
+                .aggregate(total=Sum('quantity'))['total']
+            ) or 0
+
+            invoiced_qty = (
+                SalesItem.objects
+                .filter(
+                    invoice_id=self.original_sale_id,
+                    batch=item.batch,
+                )
+                .aggregate(total=Sum('quantity'))['total']
+            ) or 0
+
+            remaining = invoiced_qty - already_submitted
+            if item.quantity > remaining:
+                raise ValidationError(
+                    f"Over-return on '{item.batch}': "
+                    f"only {remaining} unit(s) remain returnable "
+                    f"(invoiced {invoiced_qty}, already returned {already_submitted})."
+                )
+
     def submit(self):
         from inventory.services import process_stock_movement
-        if self.status != 'DRAFT':
-            raise ValidationError("Only draft documents can be submitted.")
+        from accounting.services import post_sales_return_gl
 
         with transaction.atomic():
+            # Pattern 1: state guard + over-return guard (inside atomic boundary)
+            self._validate_return_quantities()
+
             for item in self.items.all():
                 process_stock_movement(
                     batch_id=item.batch.id,
                     quantity=item.quantity,
                     doc_type='SalesReturn',
                     doc_id=self.id,
+                    warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
+            # Pattern 2: full Credit Note GL (Dr Sales Returns | Cr AR)
+            post_sales_return_gl(self)
+
             self.status = 'SUBMITTED'
-            self.save()
+            self.save(update_fields=['status'])
 
     def cancel(self):
         from inventory.services import process_stock_movement, InsufficientStockError
+        from accounting.services import reverse_document_gl
+
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
@@ -973,13 +1102,18 @@ class SalesReturn(models.Model):
                         quantity=-item.quantity,
                         doc_type='SalesReturnCancel',
                         doc_id=self.id,
+                        warehouse_id=item.warehouse_id if item.warehouse_id else None,
                     )
                 except InsufficientStockError as e:
                     raise ValidationError(f"Cannot revert return: {str(e)}")
+
+            # Reverse the Credit Note GL entries posted at submit time
+            reverse_document_gl('SalesReturn', self.id)
+
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()
             self.status = 'CANCELLED'
-            self.save()
+            self.save(update_fields=['status'])
 
     def delete(self, *args, **kwargs):
         if self.status != 'DRAFT':
@@ -991,10 +1125,26 @@ class SalesReturn(models.Model):
     def __str__(self):
         return f"Return from {self.original_sale} on {self.date}"
 
+
 class SalesReturnItem(models.Model):
     return_invoice = models.ForeignKey(SalesReturn, related_name='items', on_delete=models.CASCADE)
     batch = models.ForeignKey(Batch, on_delete=models.PROTECT)
     quantity = models.IntegerField()
+
+    # BUG-05 fix / Phase 2.1: Store the invoiced unit price at return creation time.
+    # Used by post_sales_return_gl() to compute proportional revenue/tax reversal.
+    unit_price_at_invoice = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        null=True, blank=True,
+        help_text="Unit price from the original invoice, frozen at return creation.",
+    )
+    # BUG-07 fix / Pattern 2: Which warehouse does stock return to?
+    warehouse = models.ForeignKey(
+        'inventory.Warehouse',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        help_text="Warehouse stock returns to. Defaults to primary warehouse if blank.",
+    )
 
     def __str__(self):
         return f"Return {self.quantity} x {self.batch}"

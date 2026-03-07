@@ -1397,8 +1397,8 @@ def get_customer_invoices(request):
         return HttpResponse("")
     
     invoices = SalesInvoice.objects.filter(
-        customer_id=customer_id, 
-        payment_status__in=['PAID', 'PARTIAL', 'UNPAID']
+        customer_id=customer_id,
+        status='SUBMITTED',
     ).order_by('-date')
     
     if request.GET.get('format') == 'json':
@@ -1433,7 +1433,8 @@ def get_supplier_invoices(request):
         return JsonResponse([], safe=False)
     
     invoices = PurchaseInvoice.objects.filter(
-        supplier_id=supplier_id
+        supplier_id=supplier_id,
+        status='SUBMITTED',
     ).order_by('-date')
     
     query = request.GET.get('q', '')
@@ -1463,16 +1464,17 @@ def get_purchase_invoice_items(request):
     items_data = []
     
     for item in invoice.items.select_related('batch', 'batch__product').all():
-        # Calculate already returned quantity for this batch from this invoice
+        # Only count SUBMITTED returns against the cap. (BUG-03 pattern)
         already_returned = PurchaseReturnItem.objects.filter(
             return_invoice__original_invoice=invoice,
-            batch=item.batch
+            return_invoice__status='SUBMITTED',
+            batch=item.batch,
         ).aggregate(Sum('quantity'))['quantity__sum'] or 0
-        
+
         max_returnable = item.quantity - already_returned
-        # Also cap at current stock
+        # Also cap at current physical stock (cannot return what isn't there)
         max_returnable = min(max_returnable, item.batch.current_quantity)
-        
+
         if max_returnable > 0:
             items_data.append({
                 'id': item.id,
@@ -1482,49 +1484,54 @@ def get_purchase_invoice_items(request):
                 'qty_purchased': item.quantity,
                 'qty_returned_already': already_returned,
                 'max_returnable': max_returnable,
-                'price': float(item.batch.purchase_price) if item.batch.purchase_price else 0,
+                # BUG-05 fix: use the invoiced basic_rate, not the current batch price
+                'price': float(item.basic_rate) if item.basic_rate else 0,
                 'unit': item.batch.unit,
                 'size': float(item.batch.size),
                 'mfg_date': item.batch.manufacturing_date.strftime('%d-%m-%Y') if item.batch.manufacturing_date else '-',
                 'exp_date': item.batch.expiry_date.strftime('%d-%m-%Y') if item.batch.expiry_date else '-',
-                'current_stock': item.batch.current_quantity
+                'current_stock': item.batch.current_quantity,
             })
-    
+
     return JsonResponse(items_data, safe=False)
 
 def get_invoice_items(request):
     invoice_id = request.GET.get('invoice_id')
     if not invoice_id:
         return JsonResponse([], safe=False)
-        
+
     invoice = get_object_or_404(SalesInvoice, pk=invoice_id)
     items_data = []
-    
+
     for item in invoice.items.select_related('batch', 'batch__product').all():
+        # Only count SUBMITTED returns — drafts haven't hit the ledger yet.
+        # This prevents blocking a return while a parallel draft exists. (BUG-03)
         already_returned = SalesReturnItem.objects.filter(
-            return_invoice__original_sale=invoice, 
-            batch=item.batch
+            return_invoice__original_sale=invoice,
+            return_invoice__status='SUBMITTED',
+            batch=item.batch,
         ).aggregate(Sum('quantity'))['quantity__sum'] or 0
-        
+
         max_returnable = item.quantity - already_returned
-        
+
         if max_returnable > 0:
             items_data.append({
-                'id': item.id, 
+                'id': item.id,
                 'product_name': item.batch.product.name,
                 'batch_id': item.batch.id,
                 'batch_number': item.batch.batch_number,
                 'qty_sold': item.quantity,
                 'qty_returned_already': already_returned,
                 'max_returnable': max_returnable,
+                # BUG-06 fix: removed duplicate dict key
                 'price': float(item.unit_price),
-                'price': float(item.unit_price),
+                'tax_rate': float(item.tax_rate),
                 'unit': item.batch.unit,
                 'size': float(item.batch.size),
                 'mfg_date': item.batch.manufacturing_date.strftime('%d-%m-%Y') if item.batch.manufacturing_date else '-',
-                'exp_date': item.batch.expiry_date.strftime('%d-%m-%Y') if item.batch.expiry_date else '-'
+                'exp_date': item.batch.expiry_date.strftime('%d-%m-%Y') if item.batch.expiry_date else '-',
             })
-            
+
     return JsonResponse(items_data, safe=False)
 
 def returns_list(request):
@@ -1542,124 +1549,136 @@ def returns_list(request):
     })
 
 def create_sales_return(request):
-    # INWARD: Customer returns item to shop. Stock INCREASES.
-    print("DEBUG: create_sales_return called")
-    print(f"DEBUG: request.method = {request.method}")
-    
+    # INWARD: Customer returns item to shop. Stock INCREASES on submit().
     if request.method == 'POST':
-        print("DEBUG: Processing POST request")
-        print(f"DEBUG: POST data keys = {list(request.POST.keys())}")
-        
         try:
             with transaction.atomic():
                 customer_id = request.POST.get('customer')
                 date = request.POST.get('date')
                 original_sale_id = request.POST.get('original_sale')
-                
-                print(f"DEBUG: customer_id={customer_id}, date={date}, original_sale_id={original_sale_id}")
-                
+
                 if not customer_id:
                     raise ValueError("Customer ID is required")
-                    
+
                 customer = Customer.objects.get(id=customer_id)
-                print(f"DEBUG: Found customer: {customer}")
-                
-                # Get original sale if provided
                 original_sale = None
                 if original_sale_id:
                     original_sale = SalesInvoice.objects.get(id=original_sale_id)
-                    print(f"DEBUG: Found original_sale: {original_sale}")
-                
+
                 sales_return = SalesReturn.objects.create(
                     customer=customer,
                     original_sale=original_sale,
                     date=date,
-                    refund_amount=0
+                    refund_amount=0,
                 )
-                print(f"DEBUG: Created SalesReturn pk={sales_return.pk}")
-                
+
                 batch_ids = request.POST.getlist('batch_id[]')
                 quantities = request.POST.getlist('qty[]')
                 prices = request.POST.getlist('price[]')
-                
-                print(f"DEBUG: batch_ids={batch_ids}")
-                print(f"DEBUG: quantities={quantities}")
-                print(f"DEBUG: prices={prices}")
-                
+
                 grand_total = Decimal('0')
-                items_created = 0
-                
+
                 for i in range(len(batch_ids)):
                     batch_id = batch_ids[i] if i < len(batch_ids) else ''
                     qty_str = quantities[i] if i < len(quantities) else ''
                     price_str = prices[i] if i < len(prices) else ''
-                    
-                    print(f"DEBUG: Processing row {i}: batch_id={batch_id}, qty={qty_str}, price={price_str}")
-                    
+
                     if not batch_id or not qty_str:
-                        print(f"DEBUG: Skipping row {i} - empty batch_id or qty")
                         continue
-                    
+
                     batch = Batch.objects.get(id=batch_id)
                     qty = int(qty_str)
+                    # BUG-05 fix: store the invoiced price per item for GL use
                     price = Decimal(price_str) if price_str else Decimal('0')
-                    # price already set above as Decimal
-                    
-                    print(f"DEBUG: Creating SalesReturnItem for batch={batch}, qty={qty}")
-                    
+
                     SalesReturnItem.objects.create(
                         return_invoice=sales_return,
                         batch=batch,
-                        quantity=qty
+                        quantity=qty,
+                        unit_price_at_invoice=price,   # Phase 2.1 new field
                     )
-                    items_created += 1
-                    
-                    # Sprint 11: Stock deferred to submit().
-                    print(f"DEBUG: Created return item (draft — no stock impact yet)")
-                    
+
                     grand_total += price * qty
-                    
-                print(f"DEBUG: Items created: {items_created}, grand_total: {grand_total}")
-                
+
                 sales_return.refund_amount = grand_total
-                sales_return.save()
-                print(f"DEBUG: Updated SalesReturn refund_amount to {grand_total}")
-                
-                # Sprint 59: Targeted Return Settlement
-                # If return is linked to an invoice, apply credit directly to that invoice.
-                # Otherwise, give generic wallet credit.
+                sales_return.save(update_fields=['refund_amount'])
+
+                # Credit note reference record (GL fires on submit(), not here).
                 target_invoice = sales_return.original_sale
                 payment_mode = 'SALES_RETURN' if target_invoice else 'WALLET_CREDIT'
-                
-                print(f"DEBUG: Creating CustomerPayment with amount={grand_total}, invoice={target_invoice}, mode={payment_mode}")
-                
-                cp = CustomerPayment.objects.create(
-                    invoice=target_invoice, 
+
+                CustomerPayment.objects.create(
+                    invoice=target_invoice,
                     amount=grand_total,
                     payment_mode=payment_mode,
                     payment_date=date,
-                    notes=f"Return Adjustment #{sales_return.pk}" if target_invoice else f"Auto-credit for Return #{sales_return.pk}",
-                    sales_return=sales_return
+                    notes=(
+                        f"Credit Note — Return #{sales_return.pk}"
+                        if target_invoice
+                        else f"Wallet Credit — Return #{sales_return.pk}"
+                    ),
+                    sales_return=sales_return,
                 )
-                print(f"DEBUG: Created CustomerPayment pk={cp.pk}")
-                
-                messages.success(request, f"Sales return created successfully. Refund: ₹{grand_total}")
-                print("DEBUG: SUCCESS - Redirecting to returns_list")
-                return redirect('returns_list')
+
+                messages.success(request, f"Sales return saved as draft. Refund: ₹{grand_total}")
+                return redirect('sales_return_detail', pk=sales_return.pk)
 
         except Exception as e:
             import traceback
-            print(f"ERROR creating return: {e}")
-            print(f"TRACEBACK: {traceback.format_exc()}")
+            traceback.print_exc()
             messages.error(request, f"Error creating return: {str(e)}")
             return redirect('returns_list')
-            
-    return render(request, 'transactions/sales_return_form.html')
+
+    # GET — handle ?from_invoice= pre-population (Phase 2.2 verified state)
+    from_invoice_pk = request.GET.get('from_invoice')
+    from_invoice = None
+    if from_invoice_pk:
+        from_invoice = get_object_or_404(SalesInvoice, pk=from_invoice_pk)
+
+    return render(request, 'transactions/sales_return_form.html', {
+        'from_invoice': from_invoice,
+    })
 
 def sales_return_detail(request, pk):
+    from accounting.models import GLEntry
+    from inventory.models import StockMovement
+
     sales_return = get_object_or_404(SalesReturn, pk=pk)
+
+    gl_entries = GLEntry.objects.filter(
+        reference_type='SalesReturn',
+        reference_id=pk,
+    ).select_related('account').order_by('pk')
+
+    stock_movements = StockMovement.objects.filter(
+        reference_document_type='SalesReturn',
+        reference_document_id=pk,
+    ).select_related('batch', 'batch__product', 'warehouse')
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
+    # Compute net / tax breakdown for hero card (Pattern 6)
+    from decimal import Decimal as D
+    total_net = sales_return.refund_amount
+    total_cgst = sum(
+        e.debit for e in gl_entries if e.account.name == 'CGST Payable'
+    )
+    total_sgst = sum(
+        e.debit for e in gl_entries if e.account.name == 'SGST Payable'
+    )
+    total_gross = total_net + total_cgst + total_sgst
+
     return render(request, 'transactions/sales_return_detail.html', {
-        'return': sales_return
+        'return': sales_return,
+        'gl_entries': gl_entries,
+        'stock_movements': stock_movements,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        'total_net': total_net,
+        'total_cgst': total_cgst,
+        'total_sgst': total_sgst,
+        'total_gross': total_gross,
     })
 
 @require_POST
@@ -1748,7 +1767,7 @@ def create_purchase_return(request):
                     )
                 
                 messages.success(request, f"Purchase return created successfully. Debit Note: ₹{grand_total}")
-                return redirect('returns_list')
+                return redirect('purchase_return_detail', pk=purchase_return.pk)
 
         except ValidationError as e:
             messages.error(request, f"Error creating return: {e.message}")
@@ -1758,13 +1777,55 @@ def create_purchase_return(request):
             messages.error(request, f"Error creating return: {str(e)}")
             return redirect('create_purchase_return')
 
-    # GET
-    return render(request, 'transactions/purchase_return_form.html')
+    # GET — handle ?from_invoice= pre-population (Phase 2.2 verified state)
+    from_invoice_pk = request.GET.get('from_invoice')
+    from_invoice = None
+    if from_invoice_pk:
+        from_invoice = get_object_or_404(PurchaseInvoice, pk=from_invoice_pk)
+
+    return render(request, 'transactions/purchase_return_form.html', {
+        'from_invoice': from_invoice,
+    })
 
 def purchase_return_detail(request, pk):
+    from accounting.models import GLEntry
+    from inventory.models import StockMovement
+
     purchase_return = get_object_or_404(PurchaseReturn, pk=pk)
+
+    gl_entries = GLEntry.objects.filter(
+        reference_type='PurchaseReturn',
+        reference_id=pk,
+    ).select_related('account').order_by('pk')
+
+    stock_movements = StockMovement.objects.filter(
+        reference_document_type='PurchaseReturn',
+        reference_document_id=pk,
+    ).select_related('batch', 'batch__product', 'warehouse')
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
+    # Compute net / tax breakdown for hero card (Pattern 6)
+    total_net = purchase_return.total_refund_amount
+    total_cgst = sum(
+        e.credit for e in gl_entries if e.account.name == 'CGST Input Recoverable'
+    )
+    total_sgst = sum(
+        e.credit for e in gl_entries if e.account.name == 'SGST Input Recoverable'
+    )
+    total_gross = total_net + total_cgst + total_sgst
+
     return render(request, 'transactions/purchase_return_detail.html', {
-        'return': purchase_return
+        'return': purchase_return,
+        'gl_entries': gl_entries,
+        'stock_movements': stock_movements,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        'total_net': total_net,
+        'total_cgst': total_cgst,
+        'total_sgst': total_sgst,
+        'total_gross': total_gross,
     })
 
 @require_POST

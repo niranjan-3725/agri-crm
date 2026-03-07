@@ -278,6 +278,19 @@
                         </svg>
                         <span class="font-bold text-xs">Print</span>
                     </button>
+
+                    {# Phase 2.2 / Pattern 5: Create Return — only for SUBMITTED purchase invoices #}
+                    {% if invoice.status == 'SUBMITTED' %}
+                    <a href="{% url 'create_purchase_return' %}?from_invoice={{ invoice.pk }}"
+                        class="flex flex-col items-center justify-center p-6 bg-red-50 hover:bg-red-100 text-red-600 rounded-3xl transition-all duration-200 group border border-transparent hover:border-red-200">
+                        <svg class="w-8 h-8 mb-3 opacity-70 group-hover:opacity-100 transition-opacity" fill="none"
+                            stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+                        </svg>
+                        <span class="font-bold text-xs">Create Return</span>
+                    </a>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>
