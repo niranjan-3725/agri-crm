@@ -1105,7 +1105,14 @@ def purchase_delete(request, pk):
         except ValidationError as e:
             messages.error(request, str(e))
             return redirect('purchase_detail', pk=pk)
-        
+        except InsufficientStockError:
+            messages.error(
+                request,
+                "Cannot cancel this purchase — some stock has already been consumed "
+                "(sold, returned, or reconciled). Reverse those transactions first."
+            )
+            return redirect('purchase_detail', pk=pk)
+
         messages.success(request, f"Purchase #{invoice.invoice_number} has been cancelled. Stock reversed.")
         return redirect('purchase_list')
     
