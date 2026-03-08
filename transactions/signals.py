@@ -71,10 +71,10 @@ def update_sales_invoice_payment_status(sender, instance, **kwargs):
 @receiver([post_save, post_delete], sender=SupplierPayment)
 def update_invoice_payment_status(sender, instance, **kwargs):
     invoice = instance.invoice
-    
+
     if invoice:
-        # Calculate total paid
-        total_paid = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        # Only count SUBMITTED payments — cancelled payments must not inflate the total.
+        total_paid = invoice.payments.filter(status='SUBMITTED').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
         
         # Update fields
         invoice.amount_paid = total_paid

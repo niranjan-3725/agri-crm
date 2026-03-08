@@ -16,26 +16,26 @@ class PayableDashboardTest(TestCase):
 
     def test_kpi_calculations(self):
         today = timezone.now().date()
-        
-        # 1. Overdue Invoice (Due yesterday)
+
+        # 1. Overdue Invoice (Due yesterday) — must be SUBMITTED to appear in dashboard
         inv_overdue = PurchaseInvoice.objects.create(
-            supplier=self.supplier, invoice_number='INV-OLD', date=today - timedelta(days=31), 
+            supplier=self.supplier, invoice_number='INV-OLD', date=today - timedelta(days=31),
             total_amount=1000, balance_due=1000, payment_status='UNPAID',
-            due_date=today - timedelta(days=1)
+            due_date=today - timedelta(days=1), status='SUBMITTED'
         )
 
-        # 2. Outstanding Invoice (Due tomorrow)
+        # 2. Outstanding Invoice (Due tomorrow) — must be SUBMITTED
         inv_outstanding = PurchaseInvoice.objects.create(
-            supplier=self.supplier, invoice_number='INV-NEW', date=today, 
+            supplier=self.supplier, invoice_number='INV-NEW', date=today,
             total_amount=500, balance_due=500, payment_status='UNPAID',
-            due_date=today + timedelta(days=1)
+            due_date=today + timedelta(days=1), status='SUBMITTED'
         )
 
-        # 3. Paid Invoice (Should be ignored for outstanding)
+        # 3. Paid Invoice (Should be ignored for outstanding) — must be SUBMITTED
         inv_paid = PurchaseInvoice.objects.create(
-            supplier=self.supplier, invoice_number='INV-PAID', date=today, 
+            supplier=self.supplier, invoice_number='INV-PAID', date=today,
             total_amount=200, amount_paid=200, balance_due=0, payment_status='PAID',
-            due_date=today
+            due_date=today, status='SUBMITTED'
         )
 
         # 4. Payment made today
@@ -59,19 +59,21 @@ class PayableDashboardTest(TestCase):
         self.assertEqual(response.context['paid_this_month'], 100)
         
     def test_record_payment(self):
+        # Invoice must be SUBMITTED — only submitted invoices are eligible for payment (Rule 9.2).
         inv = PurchaseInvoice.objects.create(
-            supplier=self.supplier, invoice_number='INV-PAY', date=timezone.now().date(), 
-            total_amount=1000, balance_due=1000, payment_status='UNPAID'
+            supplier=self.supplier, invoice_number='INV-PAY', date=timezone.now().date(),
+            total_amount=1000, balance_due=1000, payment_status='UNPAID', status='SUBMITTED'
         )
-        
+
         record_url = reverse('record_payment')
         response = self.client.post(record_url, {
             'invoice_id': inv.id,
             'amount': 200,
             'payment_mode': 'CASH'
         })
-        
-        self.assertEqual(response.status_code, 200)
+
+        # View returns 204 + HX-Redirect header on success (Rule 9.1).
+        self.assertEqual(response.status_code, 204)
         
         # Check Invoice Updated
         inv.refresh_from_db()

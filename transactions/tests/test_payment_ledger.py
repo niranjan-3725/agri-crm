@@ -11,13 +11,15 @@ class PaymentLedgerTest(TestCase):
         self.user = User.objects.create_user(username='testuser', password='password')
         self.client.login(username='testuser', password='password')
         self.supplier = Supplier.objects.create(name='Test Supplier', phone='1234567890')
+        # Invoice must be SUBMITTED — only submitted invoices are eligible for payment (Rule 9.2).
         self.invoice = PurchaseInvoice.objects.create(
-            supplier=self.supplier, 
-            invoice_number='INV-LEDGER', 
-            date=timezone.now().date(), 
-            total_amount=1000, 
-            balance_due=1000, 
-            payment_status='UNPAID'
+            supplier=self.supplier,
+            invoice_number='INV-LEDGER',
+            date=timezone.now().date(),
+            total_amount=1000,
+            balance_due=1000,
+            payment_status='UNPAID',
+            status='SUBMITTED',
         )
 
     def test_record_payment_with_notes(self):
@@ -28,8 +30,9 @@ class PaymentLedgerTest(TestCase):
             'payment_mode': 'UPI',
             'notes': 'Test Transaction ID 123'
         })
-        self.assertEqual(response.status_code, 200)
-        
+        # View returns 204 + HX-Redirect header on success (Rule 9.1).
+        self.assertEqual(response.status_code, 204)
+
         # Verify Payment Created
         payment = SupplierPayment.objects.first()
         self.assertEqual(payment.amount, 500)

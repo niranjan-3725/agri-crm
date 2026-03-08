@@ -547,7 +547,12 @@ class SupplierPayment(models.Model):
         ('BANK', 'Bank Transfer'),
         ('DEBIT_NOTE', 'Debit Note'),
     ]
-    
+
+    STATUS_CHOICES = [
+        ('SUBMITTED', 'Submitted'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
     invoice = models.ForeignKey(PurchaseInvoice, related_name='payments', on_delete=models.CASCADE, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
@@ -555,6 +560,7 @@ class SupplierPayment(models.Model):
     reference_id = models.CharField(max_length=50, blank=True, null=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='SUBMITTED')
 
     # Sprint 61: Link PurchaseReturn for Debit Note
     purchase_return = models.OneToOneField(
@@ -564,7 +570,7 @@ class SupplierPayment(models.Model):
         on_delete=models.SET_NULL,
         related_name='payment_entry'
     )
-    
+
     def save(self, *args, **kwargs):
         is_new = self._state.adding
         super().save(*args, **kwargs)
@@ -574,6 +580,33 @@ class SupplierPayment(models.Model):
             if self.payment_mode != 'DEBIT_NOTE':
                 from accounting.services import post_supplier_payment_gl
                 post_supplier_payment_gl(self)
+
+    def cancel(self):
+        """Reverse this payment: delete its GL entries and mark as CANCELLED.
+
+        The post_save signal on SupplierPayment will fire after save() and
+        recalculate the invoice balance, excluding this (now CANCELLED) payment.
+        """
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+        from accounting.models import GLEntry
+
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only SUBMITTED payments can be cancelled.")
+
+        with transaction.atomic():
+            # Reverse the GL: delete the two-leg AP/Cash entries for this payment.
+            # Deletion is correct here — the payment never "happened" from a ledger
+            # perspective. The audit trail is preserved via status='CANCELLED'.
+            GLEntry.objects.filter(
+                reference_type='SupplierPayment',
+                reference_id=self.id,
+            ).delete()
+
+            self.status = 'CANCELLED'
+            self.save(update_fields=['status'])
+            # post_save signal fires here and recalculates invoice.balance_due
+            # by summing only status='SUBMITTED' payments — so this one is excluded.
 
     def __str__(self):
         return f"Payment {self.amount} for {self.invoice.invoice_number if self.invoice else 'N/A'}"
