@@ -356,6 +356,142 @@ invoices = PurchaseInvoice.objects.filter(supplier_id=supplier_id, status='SUBMI
 
 ---
 
+## 10. The Generic Refactor Framework
+
+**Extracted from Purchase Module success patterns (Sprint 9–16).** These four patterns are reusable for Sales, Inventory, and Master Data modules.
+
+### 10.1 Triple-Entry State Machine
+
+Every transactional document must enforce:
+```
+DRAFT ──submit()──► SUBMITTED ──cancel()──► CANCELLED
+```
+
+**Rules:**
+- DRAFT: mutable, no GL/stock posted
+- SUBMITTED: immutable, GL + stock posted atomically
+- CANCELLED: read-only, all effects reversed atomically
+- Always wrap submit()/cancel() in `transaction.atomic()`
+- Guard UI elements behind status checks: `{% if doc.status == 'DRAFT' %}`
+
+See **AgriCRM_Generic_Refactor_Framework.md § Pattern 1** for full implementation.
+
+### 10.2 Ledger Announcement Pattern
+
+Financial documents (Invoice, SalesInvoice) must announce their effects to multiple systems atomically:
+
+```
+Invoice.submit()
+    ├─► Fulfillment.submit() [stock movements]
+    ├─► post_*_invoice_gl() [AP/AR/Revenue/Tax]
+    └─► OrderItem.update() [procurement/sales tracking]
+    All in transaction.atomic()
+```
+
+**Rules:**
+- Never post GL without posting stock
+- Never post stock without posting GL
+- Never update tracking without GL + stock
+- Reverse **all** effects when cancelling
+
+See **AgriCRM_Generic_Refactor_Framework.md § Pattern 2** for full implementation.
+
+### 10.3 Tax-Exclusive Valuation
+
+GST must be separated from cost basis:
+
+```
+basic_rate = ₹100 (cost, pre-tax)
+tax = ₹18 (5–28% GST)
+total = ₹118 (cost + tax)
+
+GL posts:  Dr SRNB ₹100, Cr AP ₹118
+           Dr CGST ₹9, Dr SGST ₹9
+```
+
+**Rules:**
+- Store `basic_rate` pre-tax in Batch and Item models
+- Calculate tax separately: `tax = basic_rate × (tax_rate / 100)`
+- GL debit gets `base_amount` (no tax), credit gets total
+- Display clearly: "₹X (ex-tax)" in templates
+
+See **AgriCRM_Generic_Refactor_Framework.md § Pattern 3** for full implementation.
+
+### 10.4 Jony Ive UX Validation
+
+Real-time, context-aware validation without bulk error banners:
+
+**Rules:**
+- Per-field touch tracking: `fieldTouched`, only show error after blur
+- Inline errors only: no bulk error banner
+- Verified state UI: blue tint + checkmark when selection confirmed
+- Focus flow: move cursor to next field after valid selection
+- Blur guard: `@mousedown.prevent` on dropdown to prevent blur-before-click race
+- Backend safety net: validate at view + model level
+
+See **AgriCRM_Generic_Refactor_Framework.md § Pattern 4** for full implementation.
+
+---
+
+## 11. The Narrow Except Trap (Unhandled InsufficientStockError)
+
+**[FIXED 2026-03-08 — `transactions/views.py:purchase_delete`]**
+
+**Symptom:** `500 Internal Server Error` at `/purchases/<pk>/delete/` when cancelling a submitted purchase invoice whose stock has already been partially or fully consumed.
+
+**Full traceback:**
+```
+MySQLdb.OperationalError: (3819, "Check constraint 'stockbin_non_negative_qty' is violated.")
+→ IntegrityError (3819, ...)
+→ InsufficientStockError: Insufficient stock in Batch 28 (warehouse 1). Attempted change: -10.
+→ Unhandled exception → 500 page
+```
+
+**Root cause:**
+1. Cancelling a submitted invoice calls `invoice.cancel()` → `PurchaseReceipt.cancel()` → `process_stock_movement()` with `-qty`.
+2. MySQL's `CHECK CONSTRAINT 'stockbin_non_negative_qty'` fires (stock can't go negative).
+3. The service converts the `IntegrityError` to an `InsufficientStockError`.
+4. The view's `except ValidationError` clause does **not** catch `InsufficientStockError` (plain `Exception` subclass).
+5. Django gets an unhandled exception → 500.
+
+**Broken code:**
+```python
+def purchase_delete(request, pk):
+    ...
+    try:
+        invoice.cancel()
+    except ValidationError as e:     # ← misses InsufficientStockError
+        messages.error(request, str(e))
+        return redirect('purchase_detail', pk=pk)
+```
+
+**Fix (applied):** Add `InsufficientStockError` to the except clause with a user-friendly message:
+```python
+    except InsufficientStockError:
+        messages.error(
+            request,
+            "Cannot cancel this purchase — some stock has already been consumed "
+            "(sold, returned, or reconciled). Reverse those transactions first."
+        )
+        return redirect('purchase_detail', pk=pk)
+```
+
+**Generic Rule:** When a view calls a service that raises a custom exception (`InsufficientStockError`, any non-Django exception), **always catch the service exception explicitly** alongside `ValidationError`. A catch-all `except Exception as e` is acceptable as a final fallback but never as the primary safety net.
+
+**Pattern to follow:**
+```python
+try:
+    invoice.cancel()
+except ValidationError as e:
+    messages.error(request, str(e))
+    return redirect(...)
+except InsufficientStockError:
+    messages.error(request, "User-friendly message explaining WHY and WHAT TO DO next.")
+    return redirect(...)
+```
+
+---
+
 ## Quick Diagnostic Checklist
 
 ### Bug appears fixed in code but still happens in browser:
@@ -374,3 +510,10 @@ invoices = PurchaseInvoice.objects.filter(supplier_id=supplier_id, status='SUBMI
 3. **Wrong template file?** → Is the dev server running from the correct worktree? Each worktree has its own template directory.
 4. **Alpine not loaded?** → Components using `x-data` / `x-show` need Alpine.js on the page. Check `base.html`.
 5. **Status guard blocking?** → Is the component wrapped in `{% if invoice.status == '...' %}`? (Rule 2)
+
+---
+
+## References
+
+- **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
+- **Last Updated** — 2026-03-08
