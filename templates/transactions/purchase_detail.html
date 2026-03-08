@@ -24,15 +24,7 @@
 
         {# Sprint 20: Reusable Document Header Component #}
         {% url 'purchase_list' as purchase_list_url %}
-        {% include 'components/document_header.html' with
-            back_url=purchase_list_url
-            back_label="Back to Ledger"
-            doc_type_label="Purchase Invoice"
-            doc_number=invoice.invoice_number
-            doc_title=invoice.supplier.name
-            doc_status=invoice.status
-            payment_status=invoice.payment_status
-        %}
+        {% include 'components/document_header.html' with back_url=purchase_list_url back_label="Back to Ledger" doc_type_label="Purchase Invoice" doc_number=invoice.invoice_number doc_title=invoice.supplier.name doc_status=invoice.status payment_status=invoice.payment_status %}
 
         {# ── DRAFT Impact Warning Banner ── #}
         {% if invoice.status == 'DRAFT' %}

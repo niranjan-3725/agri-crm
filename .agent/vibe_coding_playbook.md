@@ -22,7 +22,7 @@ gl_total_debit=gl_total_debit %}
 
 **Rule:** Every `{% ... %}` tag must open and close on the **same line**. No exceptions.
 
-**Detection script:**
+**Detection script — run after every merge to main:**
 ```bash
 python -c "
 import os, re
@@ -35,6 +35,13 @@ for root, _, files in os.walk('templates'):
                 print(f'{path}:{i}: {line.strip()[:80]}')
 "
 ```
+
+**Note:** Results inside `{# ... #}` comment blocks are false positives — ignore them. Only fix lines where `{%` appears as live code, not inside a comment.
+
+**Known affected files (all fixed as of 2026-03-08):**
+- `purchase_detail.html` — `document_header.html` include, `ledger_timeline.html` include, `document_actions.html` include
+- `purchase_order_detail.html` — `document_actions.html` include
+- `purchase_receipt_detail.html` — `document_actions.html` include
 
 ---
 
