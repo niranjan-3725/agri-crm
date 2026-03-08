@@ -1,7 +1,7 @@
 # AgriCRM — Vibe Coding Playbook
 
 > Permanent memory for AI agents. Read this before touching templates, views, or models.
-> Last updated: 2026-03-07 (Django ORM aggregation import fix added)
+> Last updated: 2026-03-08
 
 ---
 
@@ -201,6 +201,27 @@ pip install django-htmx
 
 **Rule:** Any time you run `pip install` inside a worktree directory, always prefix with `./venv/Scripts/python -m pip install`.
 
+### 8.5 — Always Start the Dev Server from the Main Branch
+
+Worktrees are **temporary feature branches**. They may contain bugs that were already fixed on `main`. Always start the dev server from the main repo (`C:\agri_crm`), not from a worktree directory.
+
+**Symptom:** A bug you already fixed appears to still be present. Server behaves differently from what the code review showed.
+
+**Root cause:** The running server is serving an old worktree's code, not `main`.
+
+**Fix:** Check which directory the server is running from:
+```bash
+# Check what's running
+preview_list  # shows cwd of the running server
+
+# Correct approach — always start from main
+# launch.json cwd must be C:\agri_crm, not a worktree path
+```
+
+**Real example:** `create_sale` in the `mystifying-mestorf` worktree had `return redirect('dashboard')` (sends user to home page). The main branch had already fixed this to `return redirect('invoice_detail', pk=invoice.id)`. The bug "reappeared" only because the server was started from the old worktree.
+
+**Rule:** When testing features for a user, always verify `preview_list` shows `cwd: C:\agri_crm` (main repo), not a worktree path.
+
 ---
 
 ### 8.2 — Always Use the Worktree Python for Validation Scripts
@@ -302,6 +323,14 @@ return redirect('sales_return_detail', pk=sales_return.pk)
 
 **Why:** The Detail View is the only place where the user can verify the document was created correctly, see the Impact Banner (DRAFT) or Ledger Timeline (SUBMITTED), and take the next action. Redirecting elsewhere discards their context.
 
+**Real example — `create_sale` bug:** An older branch had `return redirect('dashboard')` after saving a new sales invoice. This sent the user to the home page, completely disconnecting them from the invoice they just created. Fixed in main to `return redirect('invoice_detail', pk=invoice.id)`.
+
+**Detection:** Scan for accidental `dashboard` redirects after document creation:
+```bash
+grep -rn "redirect('dashboard')" transactions/ inventory/
+# Zero results = clean. Any result = likely a bug.
+```
+
 ---
 
 ### Rule 9.2 — Filter Active Documents Only in Lookups
@@ -328,6 +357,10 @@ invoices = PurchaseInvoice.objects.filter(supplier_id=supplier_id, status='SUBMI
 ---
 
 ## Quick Diagnostic Checklist
+
+### Bug appears fixed in code but still happens in browser:
+1. **Wrong server cwd?** → Run `preview_list` and verify `cwd` is `C:\agri_crm`, not a worktree. Old worktrees can have already-fixed bugs. (Rule 8.5)
+2. **Right cwd but wrong code?** → Did you start the server before pulling latest main? Restart after `git pull`. (Rule 8.5)
 
 ### Server won't start or runtime NameError on specific view:
 1. **ModuleNotFoundError?** → Did you install the package in the worktree venv? Run `./venv/Scripts/python -m pip install <pkg>`. (Rule 8.1)
