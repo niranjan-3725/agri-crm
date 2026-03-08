@@ -3,7 +3,7 @@
 
 {% block content %}
 <div class="flex flex-col xl:flex-row min-h-screen"
-    x-data="{ showPayModal: false, invoiceId: '', amount: 0, maxAmount: 0, mode: 'CASH' }">
+    x-data="{ showPayModal: false, invoiceId: '', amount: 0, maxAmount: 0, mode: 'CASH', payError: '' }">
 
     <!-- CENTER: Main Content Area -->
     <main class="flex-1 min-w-0 p-6 md:p-10 lg:p-12 pb-32 xl:pb-12 animate-fade-in">
@@ -120,7 +120,7 @@
                         </div>
                         {% else %}
                         <button
-                            @click="invoiceId = '{{ invoice.id }}'; amount = {{ invoice.balance_due }}; maxAmount = {{ invoice.balance_due }}; showPayModal = true"
+                            @click="invoiceId = '{{ invoice.id }}'; amount = {{ invoice.balance_due }}; maxAmount = {{ invoice.balance_due }}; payError = ''; showPayModal = true"
                             class="bg-black text-white px-6 py-3 rounded-xl font-bold text-sm shadow-lg hover:scale-105 active:scale-95 transition-all transform flex items-center gap-2">
                             <span>Pay</span>
                             <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24"
@@ -201,7 +201,7 @@
         <p class="text-sm text-gray-400 mb-8">Enter payment details below.</p>
 
         <form hx-post="/transactions/record-payment/" hx-swap="none"
-            @htmx:after-request="showPayModal = false; window.location.reload()">
+            @htmx:after-request="if (!event.detail.successful) { try { payError = JSON.parse(event.detail.xhr.responseText).error } catch(e) { payError = 'Payment failed. Please try again.' } } else { payError = '' }">
             {% csrf_token %}
             <input type="hidden" name="invoice_id" x-model="invoiceId">
 
@@ -268,6 +268,12 @@
                         Notes</label>
                     <textarea name="notes" placeholder="Cheque No, Transaction ID, or Notes..."
                         class="w-full h-24 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500 rounded-2xl py-4 px-4 text-sm font-medium text-gray-900 outline-none transition-all resize-none placeholder-gray-400"></textarea>
+                </div>
+
+                <!-- Server-side error (e.g. state leakage guard) -->
+                <div x-show="payError" class="text-xs text-red-500 font-bold flex items-center gap-1">
+                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span x-text="payError"></span>
                 </div>
 
                 <button type="submit" :disabled="parseFloat(amount) <= 0 || parseFloat(amount) > parseFloat(maxAmount)"

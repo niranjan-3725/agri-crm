@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="min-h-screen p-6 md:p-10 lg:p-12 animate-fade-in">
+<div class="max-w-3xl mx-auto space-y-8">
+
+    <!-- Breadcrumb -->
+    <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest">
+        <a href="{% url 'accounts_payable' %}" class="hover:text-gray-700 transition-colors">Finance</a>
+        <span>•</span>
+        <a href="{% url 'accounts_payable' %}" class="hover:text-gray-700 transition-colors">Payables</a>
+        <span>•</span>
+        <span class="text-gray-600">Payment #{{ payment.pk }}</span>
+    </div>
+
+    <!-- Page Header -->
+    <header class="flex items-start justify-between gap-4">
+        <div>
+            <h1 class="text-4xl font-bold text-gray-900 tracking-tight">Supplier Payment</h1>
+            <p class="text-gray-400 mt-1 font-medium">
+                {% if payment.invoice %}
+                    Invoice #{{ payment.invoice.invoice_number }} &mdash; {{ payment.invoice.supplier.name }}
+                {% else %}
+                    Standalone Payment
+                {% endif %}
+            </p>
+        </div>
+
+        <!-- Status Badge -->
+        {% if payment.status == 'SUBMITTED' %}
+        <span class="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold uppercase tracking-widest shrink-0">
+            Submitted
+        </span>
+        {% elif payment.status == 'CANCELLED' %}
+        <span class="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-bold uppercase tracking-widest shrink-0">
+            Cancelled
+        </span>
+        {% endif %}
+    </header>
+
+    <!-- Impact Banner (SUBMITTED — show what this entry did to the ledger) -->
+    {% if payment.status == 'SUBMITTED' %}
+    <div class="bg-blue-50/60 border border-blue-200/70 rounded-2xl p-5 flex items-start gap-4">
+        <div class="w-9 h-9 rounded-xl bg-blue-100 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+        </div>
+        <div>
+            <p class="text-sm font-bold text-blue-800">Ledger Impact Active</p>
+            <p class="text-xs text-blue-600/80 mt-0.5">
+                This payment posted <span class="font-bold">Dr Accounts Payable ₹{{ payment.amount|intcomma }}</span> and
+                <span class="font-bold">Cr Cash / Bank ₹{{ payment.amount|intcomma }}</span>.
+                Cancelling this payment will reverse both entries and restore the invoice balance.
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- CANCELLED Banner -->
+    {% if payment.status == 'CANCELLED' %}
+    <div class="bg-red-50/60 border border-red-200/70 rounded-2xl p-5 flex items-start gap-4">
+        <div class="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+        </div>
+        <div>
+            <p class="text-sm font-bold text-red-700">Payment Cancelled</p>
+            <p class="text-xs text-red-500/80 mt-0.5">
+                All GL entries have been reversed. The invoice balance has been restored.
+                This record is read-only for audit purposes.
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Payment Detail Card -->
+    <div class="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
+        <div class="p-8">
+            <h2 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">Payment Details</h2>
+
+            <div class="grid grid-cols-2 gap-6">
+                <!-- Amount -->
+                <div>
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Amount</p>
+                    <p class="text-3xl font-bold text-gray-900">₹{{ payment.amount|intcomma }}</p>
+                </div>
+
+                <!-- Mode -->
+                <div>
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Payment Mode</p>
+                    <span class="inline-flex items-center px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 font-bold text-sm uppercase tracking-wide">
+                        {{ payment.get_payment_mode_display }}
+                    </span>
+                </div>
+
+                <!-- Date -->
+                <div>
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Payment Date</p>
+                    <p class="text-base font-bold text-gray-900">{{ payment.payment_date|date:"d M Y" }}</p>
+                </div>
+
+                <!-- Recorded At -->
+                <div>
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Recorded At</p>
+                    <p class="text-base font-medium text-gray-600">{{ payment.created_at|date:"d M Y, H:i" }}</p>
+                </div>
+
+                <!-- Reference -->
+                {% if payment.reference_id %}
+                <div class="col-span-2">
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Reference ID</p>
+                    <p class="text-base font-medium text-gray-700 font-mono">{{ payment.reference_id }}</p>
+                </div>
+                {% endif %}
+
+                <!-- Notes -->
+                {% if payment.notes %}
+                <div class="col-span-2">
+                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Notes</p>
+                    <p class="text-sm text-gray-600 leading-relaxed">{{ payment.notes }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Invoice Link Footer -->
+        {% if payment.invoice %}
+        <div class="border-t border-gray-100 px-8 py-4 bg-gray-50/50 flex items-center justify-between">
+            <div>
+                <p class="text-xs font-bold text-gray-400 uppercase tracking-wider">Applied to Invoice</p>
+                <p class="text-sm font-bold text-gray-700 mt-0.5">
+                    #{{ payment.invoice.invoice_number }} &mdash; {{ payment.invoice.supplier.name }}
+                </p>
+            </div>
+            <a href="{% url 'purchase_detail' payment.invoice.pk %}" class="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors flex items-center gap-1">
+                View Invoice
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                </svg>
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Ledger Timeline (Pattern 4 & 6) -->
+    {% include 'components/ledger_timeline.html' with gl_entries=gl_entries stock_movements=None gl_total_debit=gl_total_debit gl_total_credit=gl_total_credit %}
+
+    <!-- Actions -->
+    {% if payment.status == 'SUBMITTED' %}
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex items-center justify-between">
+        <div>
+            <p class="text-sm font-bold text-gray-900">Cancel This Payment</p>
+            <p class="text-xs text-gray-400 mt-0.5">Reverses the GL entries and restores the invoice balance. Cannot be undone.</p>
+        </div>
+        <form method="POST" action="{{ cancel_url }}" onsubmit="return confirm('Cancel this payment? This will reverse the GL entries and restore the invoice balance. This action cannot be undone.');">
+            {% csrf_token %}
+            <button type="submit" class="px-5 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-xl font-bold text-sm hover:bg-red-100 transition-colors">
+                Cancel Payment
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
+</div>
+</div>
+{% endblock %}

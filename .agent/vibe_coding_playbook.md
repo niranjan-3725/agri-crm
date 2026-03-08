@@ -499,6 +499,84 @@ except InsufficientStockError:
 
 ---
 
+## 12. The Payment State Machine Rule
+
+**[IMPLEMENTED 2026-03-08 — Payables Module Refactor]**
+
+### 12.1 — SupplierPayment Lifecycle
+
+Every `SupplierPayment` follows the two-state lifecycle:
+```
+SUBMITTED ──cancel()──► CANCELLED
+```
+
+- **SUBMITTED** (default): GL entries exist (`Dr AP / Cr Cash`). Invoice balance reduced.
+- **CANCELLED**: GL entries deleted. Invoice balance restored by signal.
+
+**No DRAFT state** for quick-pay modal payments — they are created and submitted atomically in one step.
+
+### 12.2 — Cancellation Reverses GL Atomically
+
+`payment.cancel()` must:
+1. Check `status == 'SUBMITTED'` (raise `ValidationError` otherwise)
+2. Inside `transaction.atomic()`:
+   - Delete `GLEntry` rows with `reference_type='SupplierPayment'`, `reference_id=payment.id`
+   - Set `status = 'CANCELLED'`
+   - Call `save(update_fields=['status'])` — this triggers the post_save signal
+3. The signal recalculates invoice balance, **filtering only `status='SUBMITTED'` payments**
+
+**Orphaned GL entries are the #1 payables ledger corruption bug.** Hard-deleting a payment without reversing its GL entries leaves the AP account permanently incorrect. Always go through `cancel()`.
+
+### 12.3 — Signal Must Filter by Status
+
+The `update_invoice_payment_status` signal must **only count SUBMITTED payments**:
+
+```python
+# ✗ WRONG — CANCELLED payments inflate the total
+total_paid = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+# ✓ CORRECT — excludes cancelled payments
+total_paid = invoice.payments.filter(status='SUBMITTED').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+```
+
+### 12.4 — HTMX Payment Submit: HX-Redirect, not window.location.reload()
+
+When a modal form submits a payment via HTMX and the server needs to redirect to the Payment Detail View, return an `HX-Redirect` header (204 response), **not** `window.location.reload()`:
+
+```python
+# ✓ CORRECT — full-page navigation to Payment Detail View
+response = HttpResponse(status=204)
+response['HX-Redirect'] = reverse('supplier_payment_detail', kwargs={'pk': payment.pk})
+return response
+```
+
+In the template, the HTMX `@htmx:after-request` handler should handle failures (show error) but success is handled by `HX-Redirect` — HTMX navigates before the event fires.
+
+```html
+<!-- ✓ CORRECT: handle errors, let HX-Redirect handle success -->
+<form hx-post="..." hx-swap="none"
+    @htmx:after-request="if (!event.detail.successful) { payError = JSON.parse(event.detail.xhr.responseText).error }">
+```
+
+**Never** use `window.location.reload()` as the success handler — it reloads the current page, discarding the user's context.
+
+### 12.5 — Test Invoices Must Be SUBMITTED for Payment Tests
+
+Tests that record payments against invoices MUST set `status='SUBMITTED'` on the invoice. A DRAFT invoice is not eligible for payment (backend guard in `record_payment`):
+
+```python
+# ✗ WRONG — invoice defaults to DRAFT, record_payment returns 400
+self.invoice = PurchaseInvoice.objects.create(total_amount=1000, ...)
+
+# ✓ CORRECT — SUBMITTED invoices are eligible for payment
+self.invoice = PurchaseInvoice.objects.create(total_amount=1000, ..., status='SUBMITTED')
+```
+
+And assert `status_code == 204` (not 200) since `record_payment` returns 204 + HX-Redirect on success.
+
+---
+
+
 ## Quick Diagnostic Checklist
 
 ### Bug appears fixed in code but still happens in browser:
@@ -523,4 +601,4 @@ except InsufficientStockError:
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
-- **Last Updated** — 2026-03-08
+- **Last Updated** — 2026-03-08 (Payables Refactor — Rule 12 added)

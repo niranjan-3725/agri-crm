@@ -770,41 +770,86 @@ def accounts_payable(request):
     }
     return render(request, 'transactions/accounts_payable.html', context)
 
-@csrf_exempt
 @require_POST
 def record_payment(request):
     invoice_id = request.POST.get('invoice_id')
     amount = Decimal(request.POST.get('amount', 0))
     mode = request.POST.get('payment_mode')
-    notes = request.POST.get('notes', '') # Capture notes
-    
-    invoice = get_object_or_404(PurchaseInvoice, id=invoice_id)
-    
-    # Sprint 49: Universal Zero-Negative Safeguard
-    if amount <= 0:
-         return JsonResponse({'success': False, 'error': 'Payment must be positive.'}, status=400)
+    notes = request.POST.get('notes', '')
 
-    # Sprint 48: Strict Payment Validation for Suppliers
+    invoice = get_object_or_404(PurchaseInvoice, id=invoice_id)
+
+    # Rule 9.2: Only SUBMITTED invoices are eligible for payment (backend guard).
+    if invoice.status != 'SUBMITTED':
+        return JsonResponse({'success': False, 'error': 'Payment can only be recorded against a submitted invoice.'}, status=400)
+
+    if amount <= 0:
+        return JsonResponse({'success': False, 'error': 'Payment amount must be greater than zero.'}, status=400)
+
     if amount > invoice.balance_due:
-        return JsonResponse({'success': False, 'error': f'Payment amount (₹{amount}) cannot exceed balance due (₹{invoice.balance_due}).'}, status=400)
-    
-    # Create Payment (Signal updates invoice balance/status)
-    SupplierPayment.objects.create(
-        invoice=invoice,
-        amount=amount,
-        payment_mode=mode,
-        payment_date=timezone.now().date(),
-        notes=notes # Save notes
-    )
-    
-    return HttpResponse(status=200)
+        return JsonResponse({'success': False, 'error': f'Payment (₹{amount}) cannot exceed balance due (₹{invoice.balance_due}).'}, status=400)
+
+    with transaction.atomic():
+        payment = SupplierPayment.objects.create(
+            invoice=invoice,
+            amount=amount,
+            payment_mode=mode,
+            payment_date=timezone.now().date(),
+            notes=notes,
+        )
+
+    # Rule 9.1: Redirect to the Payment Detail View, not back to the list.
+    # HX-Redirect causes HTMX to do a full-page navigation to the detail view.
+    from django.urls import reverse
+    response = HttpResponse(status=204)
+    response['HX-Redirect'] = reverse('supplier_payment_detail', kwargs={'pk': payment.pk})
+    return response
+
+
+@require_POST
+def cancel_supplier_payment(request, pk):
+    payment = get_object_or_404(SupplierPayment, pk=pk)
+    try:
+        payment.cancel()
+    except ValidationError as e:
+        messages.error(request, str(e))
+    return redirect('supplier_payment_detail', pk=pk)
+
 
 @require_POST
 def delete_supplier_payment(request, pk):
+    """Hard-delete only: legacy route kept for backward compat. Reverses GL before deleting."""
     payment = get_object_or_404(SupplierPayment, pk=pk)
-    invoice_pk = payment.invoice.pk
-    payment.delete() # Signal handles balance update
-    return redirect('purchase_detail', pk=invoice_pk)
+    invoice_pk = payment.invoice.pk if payment.invoice else None
+    # Reverse GL entries before hard-deleting so the AP ledger stays clean.
+    from accounting.models import GLEntry
+    GLEntry.objects.filter(reference_type='SupplierPayment', reference_id=payment.id).delete()
+    payment.delete()  # post_delete signal recalculates invoice balance
+    if invoice_pk:
+        return redirect('purchase_detail', pk=invoice_pk)
+    return redirect('accounts_payable')
+
+
+def supplier_payment_detail(request, pk):
+    """Detail view for a single SupplierPayment with its GL ledger timeline."""
+    from accounting.models import GLEntry
+
+    payment = get_object_or_404(SupplierPayment, pk=pk)
+    gl_entries = list(GLEntry.objects.filter(
+        reference_type='SupplierPayment', reference_id=payment.id
+    ).select_related('account').order_by('created_at'))
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
+    return render(request, 'transactions/supplier_payment_detail.html', {
+        'payment': payment,
+        'gl_entries': gl_entries,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        'cancel_url': f'/payments/{payment.pk}/cancel/',
+    })
+
 
 def purchase_detail(request, pk):
     from accounting.models import GLEntry
