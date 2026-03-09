@@ -204,12 +204,15 @@
 
             {% for payment in invoice.payments.all %}
             <div
-                class="bg-white rounded-2xl p-5 mb-3 border border-gray-200/60 flex justify-between items-center shadow-sm">
+                class="bg-white rounded-2xl p-5 mb-3 border border-gray-200/60 flex justify-between items-center shadow-sm {% if payment.status == 'CANCELLED' %}opacity-50{% endif %}">
                 <!-- Left -->
                 <div>
                     <div class="flex items-center gap-3">
-                        <span class="text-gray-900 font-bold">{{ payment.payment_date|date:"d M Y" }}</span>
+                        <span class="{% if payment.status == 'CANCELLED' %}line-through text-gray-400{% else %}text-gray-900{% endif %} font-bold">{{ payment.payment_date|date:"d M Y" }}</span>
                         <span class="text-xs text-gray-400 uppercase tracking-wider">{{ payment.payment_mode }}</span>
+                        {% if payment.status == 'CANCELLED' %}
+                        <span class="px-2 py-0.5 bg-red-50 text-red-500 border border-red-200 rounded-md text-[10px] font-bold uppercase tracking-wider">Cancelled</span>
+                        {% endif %}
                     </div>
                     {% if payment.notes %}
                     <div class="text-xs text-gray-400 mt-1">{{ payment.notes }}</div>
@@ -218,7 +221,15 @@
 
                 <!-- Right -->
                 <div class="flex items-center gap-4">
-                    <span class="text-lg font-bold text-gray-900">₹{{ payment.amount|intcomma }}</span>
+                    <span class="text-lg font-bold {% if payment.status == 'CANCELLED' %}line-through text-gray-400{% else %}text-gray-900{% endif %}">₹{{ payment.amount|intcomma }}</span>
+                    <!-- View Receipt Detail (Rule 13.6) -->
+                    <a href="{% url 'customer_payment_detail' payment.pk %}"
+                        class="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-blue-50">
+                        View
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </a>
                     {% if invoice.status == 'DRAFT' %}
                     <form method="POST" action="{% url 'delete_customer_payment' payment.pk %}">
                         {% csrf_token %}

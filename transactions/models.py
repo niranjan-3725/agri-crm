@@ -1002,7 +1002,14 @@ class CustomerPayment(models.Model):
         ('WALLET_CREDIT', 'Wallet Credit'),
         ('SALES_RETURN', 'Sales Return Adjustment'),
     ]
-    
+
+    # Rule 13.1 (Playbook): SUBMITTED = active, CANCELLED = reversed.
+    # No DRAFT state — payments are created and submitted atomically in one step.
+    STATUS_CHOICES = [
+        ('SUBMITTED', 'Submitted'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
     invoice = models.ForeignKey(SalesInvoice, related_name='payments', on_delete=models.PROTECT, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField(default=timezone.now)
@@ -1010,7 +1017,8 @@ class CustomerPayment(models.Model):
     reference_id = models.CharField(max_length=50, blank=True, null=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='SUBMITTED')
+
     reversal_of = models.OneToOneField(
         'self',
         null=True, blank=True,
@@ -1024,7 +1032,7 @@ class CustomerPayment(models.Model):
         on_delete=models.SET_NULL,
         related_name='payment_entry'
     )
-    
+
     def save(self, *args, **kwargs):
         is_new = self._state.adding
         super().save(*args, **kwargs)
@@ -1036,6 +1044,48 @@ class CustomerPayment(models.Model):
             if self.payment_mode not in ('SALES_RETURN', 'WALLET_CREDIT'):
                 from accounting.services import post_customer_payment_gl
                 post_customer_payment_gl(self)
+
+    def cancel(self):
+        """Reverse this receipt: delete its GL entries and mark CANCELLED.
+
+        The post_save signal fires after save() and recalculates the linked
+        SalesInvoice balance, filtering only status='SUBMITTED' payments —
+        so this payment is excluded and balance_due is correctly restored.
+
+        For WALLET / REFUND payments the wallet balance must also be restored
+        explicitly here, because the post_save signal's wallet logic only fires
+        on creation (created=True) or hard-delete, not on a status update.
+        """
+        from accounting.models import GLEntry
+
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only SUBMITTED payments can be cancelled.")
+
+        with transaction.atomic():
+            # 1. Reverse GL: delete the two-leg Cash/AR entries for this payment.
+            #    SALES_RETURN and WALLET_CREDIT never posted GL in save(), so
+            #    this is a safe no-op for those modes.
+            GLEntry.objects.filter(
+                reference_type='CustomerPayment',
+                reference_id=self.id,
+            ).delete()
+
+            # 2. Restore wallet balance for modes that deducted / credited it.
+            #    WALLET / REFUND deducted wallet on creation → restore on cancel.
+            #    WALLET_CREDIT credited wallet on creation → deduct on cancel.
+            if self.invoice and self.invoice.customer_id:
+                customer = self.invoice.customer
+                if self.payment_mode in ('WALLET', 'REFUND'):
+                    customer.wallet_balance += self.amount
+                    customer.save()
+                elif self.payment_mode == 'WALLET_CREDIT':
+                    customer.wallet_balance -= self.amount
+                    customer.save()
+
+            # 3. Mark cancelled. post_save signal recalculates invoice balance
+            #    using only status='SUBMITTED' payments, restoring balance_due.
+            self.status = 'CANCELLED'
+            self.save(update_fields=['status'])
 
     def __str__(self):
         if self.invoice:

@@ -97,7 +97,7 @@
                         </div>
                         <!-- Sprint 46: Record Cash/UPI Button -->
                         <button type="button"
-                            @click="$dispatch('open-receipt-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })"
+                            @click="$dispatch('open-receipt-modal', { id: '{{ invoice.id }}', amount: '{{ invoice.balance_due }}', balance_due: '{{ invoice.balance_due }}', number: '{{ invoice.invoice_number }}' })"
                             class="px-4 py-2 bg-gray-900 text-white text-xs font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-lg flex items-center gap-1">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
