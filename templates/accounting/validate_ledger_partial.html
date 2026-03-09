@@ -1,0 +1,57 @@
+{# Sprint 19: Validate Ledger HTMX partial — returned by validate_ledger view #}
+{% load humanize %}
+
+<div class="space-y-3 mt-2">
+
+    {# Overall status banner #}
+    {% if all_pass %}
+    <div class="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+        <div class="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <div>
+            <p class="text-sm font-bold text-emerald-800">Clean Bill of Health</p>
+            <p class="text-xs text-emerald-600 font-medium mt-0.5">All {{ results|length }} checks passed — ledger is consistent.</p>
+        </div>
+    </div>
+    {% else %}
+    <div class="flex items-center gap-3 p-4 bg-red-50 border border-red-100 rounded-xl">
+        <div class="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+        </div>
+        <div>
+            <p class="text-sm font-bold text-red-800">Discrepancies Detected</p>
+            <p class="text-xs text-red-600 font-medium mt-0.5">One or more checks failed — review the details below.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Individual check results #}
+    {% for result in results %}
+    <div class="flex items-start gap-3 p-3.5 bg-gray-50 rounded-xl border {% if result.passed %}border-gray-100{% else %}border-red-200 bg-red-50/50{% endif %}">
+        <div class="mt-0.5 shrink-0">
+            {% if result.passed %}
+            <div class="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
+                <svg class="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            {% else %}
+            <div class="w-5 h-5 rounded-full bg-red-100 flex items-center justify-center">
+                <svg class="w-3 h-3 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </div>
+            {% endif %}
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="text-xs font-bold {% if result.passed %}text-gray-700{% else %}text-red-800{% endif %}">{{ result.label }}</p>
+            <p class="text-[10px] font-medium mt-0.5 {% if result.passed %}text-gray-400{% else %}text-red-600{% endif %}">{{ result.detail }}</p>
+        </div>
+        <div class="shrink-0">
+            {% if result.passed %}
+            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[9px] font-bold uppercase tracking-wide">PASS</span>
+            {% else %}
+            <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-bold uppercase tracking-wide">FAIL</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+</div>

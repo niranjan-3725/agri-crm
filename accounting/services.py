@@ -253,7 +253,11 @@ def post_sdnb_clearance_gl(delivery_note, sales_invoice_id: int) -> list[GLEntry
     )
 
 
-def reverse_document_gl(reference_type: str, reference_id: int) -> None:
+def reverse_document_gl(
+    reference_type: str,
+    reference_id: int,
+    exclude_account_names: list[str] | None = None,
+) -> None:
     """Post reversing GL entries for a cancelled document.
 
     Creates a mirror entry (debit/credit swapped) for every original GL row
@@ -263,15 +267,28 @@ def reverse_document_gl(reference_type: str, reference_id: int) -> None:
 
     Used when cancelling an invoice to reverse its AR/AP/Tax GL postings.
     The stock-level GL reversal is handled separately by ``post_stock_gl()``.
+
+    Parameters
+    ----------
+    exclude_account_names : list[str] | None
+        Account names to skip when building reversal entries.  Use this when
+        the cancel path already reverses certain accounts via
+        ``process_stock_movement()`` (e.g. 'Stock In Hand') to prevent
+        double-posting.  See Playbook Rule 14.
     """
     originals = list(
         GLEntry.objects.filter(
             reference_type=reference_type,
             reference_id=reference_id,
-        ).order_by('pk')  # Deterministic order so reversals mirror originals 1-for-1
+        ).select_related('account').order_by('pk')  # select_related avoids N+1 on account.name
     )
     if not originals:
         return
+
+    if exclude_account_names:
+        originals = [e for e in originals if e.account.name not in exclude_account_names]
+        if not originals:
+            return
 
     reversing = [
         GLEntry(

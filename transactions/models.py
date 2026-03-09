@@ -947,6 +947,16 @@ class PurchaseReturn(models.Model):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
+        # Stock GL accounts are already reversed by process_stock_movement below
+        # (doc_type='PurchaseReturnCancel').  Exclude them from reverse_document_gl
+        # to prevent the double-posting bug described in Playbook Rule 14.
+        _STOCK_GL_ACCOUNTS = [
+            'Stock In Hand',
+            'Stock Received But Not Billed',
+            'Stock Delivered But Not Billed',
+            'Cost of Goods Sold',
+        ]
+
         with transaction.atomic():
             for item in self.items.all():
                 process_stock_movement(
@@ -956,8 +966,9 @@ class PurchaseReturn(models.Model):
                     doc_id=self.id,
                     warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
-            # Reverse the Debit Note GL entries posted at submit time
-            reverse_document_gl('PurchaseReturn', self.id)
+            # Reverse only the Debit Note financial GL entries (AP / Purchase Returns / Tax).
+            # Stock account reversal is handled above via PurchaseReturnCancel movement.
+            reverse_document_gl('PurchaseReturn', self.id, exclude_account_names=_STOCK_GL_ACCOUNTS)
 
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()
@@ -1178,6 +1189,16 @@ class SalesReturn(models.Model):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
+        # Stock GL accounts are already reversed by process_stock_movement below
+        # (doc_type='SalesReturnCancel').  Exclude them from reverse_document_gl
+        # to prevent the double-posting bug described in Playbook Rule 14.
+        _STOCK_GL_ACCOUNTS = [
+            'Stock In Hand',
+            'Stock Received But Not Billed',
+            'Stock Delivered But Not Billed',
+            'Cost of Goods Sold',
+        ]
+
         with transaction.atomic():
             for item in self.items.all():
                 try:
@@ -1191,8 +1212,9 @@ class SalesReturn(models.Model):
                 except InsufficientStockError as e:
                     raise ValidationError(f"Cannot revert return: {str(e)}")
 
-            # Reverse the Credit Note GL entries posted at submit time
-            reverse_document_gl('SalesReturn', self.id)
+            # Reverse only the Credit Note financial GL entries (AR / Sales Returns / Tax).
+            # Stock account reversal is handled above via SalesReturnCancel movement.
+            reverse_document_gl('SalesReturn', self.id, exclude_account_names=_STOCK_GL_ACCOUNTS)
 
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()

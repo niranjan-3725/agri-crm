@@ -1,0 +1,271 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="min-h-screen bg-[#F8F9FA]">
+<div class="max-w-[1400px] mx-auto p-6 md:p-8 lg:p-10 space-y-6">
+
+    {# ── Breadcrumb / Header ─────────────────────────────────────────────── #}
+    <header class="flex items-start justify-between">
+        <div>
+            <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">
+                <span>Accounting</span>
+                <span>•</span>
+                <span class="text-gray-700">General Ledger</span>
+            </div>
+            <h1 class="text-4xl font-bold text-gray-900 tracking-tight">General Ledger</h1>
+            <p class="text-gray-400 mt-1 font-medium">
+                Every GL posting in the system — filterable by account, date, and voucher type.
+            </p>
+        </div>
+        {% if active_filters %}
+        <a href="{% url 'general_ledger' %}" class="mt-1 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all shrink-0">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            Clear filters
+        </a>
+        {% endif %}
+    </header>
+
+    {# ── Pattern 6: Summary Cards ────────────────────────────────────────── #}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+        {# Total Entries #}
+        <div class="bg-white rounded-2xl border border-gray-100 p-5">
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Entries</div>
+            <div class="text-3xl font-bold text-gray-900">{{ total_entries }}</div>
+            <div class="text-[10px] text-gray-400 font-medium mt-1">
+                {% if active_filters %}filtered{% else %}all time{% endif %}
+            </div>
+        </div>
+
+        {# Total Debits #}
+        <div class="bg-white rounded-2xl border border-gray-100 p-5">
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Debits</div>
+            <div class="text-3xl font-bold text-emerald-600">{{ total_debit|floatformat:2|intcomma }}</div>
+            <div class="text-[10px] text-gray-400 font-medium mt-1">sum of all Dr</div>
+        </div>
+
+        {# Total Credits #}
+        <div class="bg-white rounded-2xl border border-gray-100 p-5">
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Credits</div>
+            <div class="text-3xl font-bold text-red-500">{{ total_credit|floatformat:2|intcomma }}</div>
+            <div class="text-[10px] text-gray-400 font-medium mt-1">sum of all Cr</div>
+        </div>
+
+        {# Net Balance #}
+        <div class="bg-white rounded-2xl border border-gray-100 p-5">
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Net Balance (Dr&minus;Cr)</div>
+            {% if net_balance > 0 %}
+            <div class="text-3xl font-bold text-emerald-700">{{ net_balance|floatformat:2|intcomma }}</div>
+            {% elif net_balance < 0 %}
+            <div class="text-3xl font-bold text-red-600">{{ net_balance|floatformat:2|intcomma }}</div>
+            {% else %}
+            <div class="text-3xl font-bold text-gray-400">0.00</div>
+            {% endif %}
+            <div class="text-[10px] font-medium mt-1 {% if net_balance == 0 %}text-emerald-500{% else %}text-orange-500{% endif %}">
+                {% if net_balance == 0 %}balanced{% else %}net exposure{% endif %}
+            </div>
+        </div>
+
+    </div>
+
+    {# ── Filter Bar ──────────────────────────────────────────────────────── #}
+    <form method="get" action="{% url 'general_ledger' %}" class="bg-white rounded-2xl border border-gray-100 p-5">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+
+            {# Date From #}
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">From</label>
+                <input type="date" name="date_from" value="{{ f_date_from }}" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50">
+            </div>
+
+            {# Date To #}
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">To</label>
+                <input type="date" name="date_to" value="{{ f_date_to }}" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50">
+            </div>
+
+            {# Account #}
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Account</label>
+                <select name="account_id" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 appearance-none cursor-pointer">
+                    <option value="">All accounts</option>
+                    {% for account in accounts %}
+                    <option value="{{ account.id }}" {% if f_account_id == account.id|stringformat:"s" %}selected{% endif %}>{{ account.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# Voucher Type #}
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Voucher Type</label>
+                <select name="voucher_type" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 appearance-none cursor-pointer">
+                    <option value="">All types</option>
+                    {% for vt in voucher_types %}
+                    <option value="{{ vt }}" {% if f_voucher_type == vt %}selected{% endif %}>{{ vt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            {# Ref ID #}
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Ref #</label>
+                <input type="number" name="ref_id" value="{{ f_ref_id }}" placeholder="e.g. 12" min="1" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 placeholder-gray-300">
+            </div>
+
+            {# Search + Submit #}
+            <div class="flex gap-2">
+                <div class="flex-1">
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Search</label>
+                    <input type="text" name="q" value="{{ f_q }}" placeholder="remarks, account..." class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 placeholder-gray-300">
+                </div>
+                <div class="flex items-end">
+                    <button type="submit" class="px-4 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-700 transition-colors shrink-0">
+                        Filter
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        {# Active filter chips #}
+        {% if active_filters %}
+        <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-50">
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest self-center">Active:</span>
+            {% if f_date_from %}<span class="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold">From: {{ f_date_from }}</span>{% endif %}
+            {% if f_date_to %}<span class="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold">To: {{ f_date_to }}</span>{% endif %}
+            {% if f_account_id %}<span class="px-2.5 py-1 bg-violet-50 text-violet-700 rounded-lg text-xs font-bold">Account #{{ f_account_id }}</span>{% endif %}
+            {% if f_voucher_type %}<span class="px-2.5 py-1 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold">{{ f_voucher_type }}</span>{% endif %}
+            {% if f_ref_id %}<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold">Ref #{{ f_ref_id }}</span>{% endif %}
+            {% if f_q %}<span class="px-2.5 py-1 bg-gray-100 text-gray-700 rounded-lg text-xs font-bold">"{{ f_q }}"</span>{% endif %}
+        </div>
+        {% endif %}
+    </form>
+
+    {# ── GL Table ────────────────────────────────────────────────────────── #}
+    <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+
+        {# Table header #}
+        <div class="px-6 py-3.5 border-b border-gray-50 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-widest">Ledger Entries</span>
+                <span class="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[10px] font-bold">{{ page_obj.paginator.count }}</span>
+            </div>
+            {% if not single_account %}
+            <span class="text-[10px] text-gray-400 font-medium">Running balance reflects all filtered accounts combined</span>
+            {% else %}
+            <span class="text-[10px] text-emerald-600 font-bold">Account balance view</span>
+            {% endif %}
+        </div>
+
+        {% if page_obj %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-50">
+                        <th class="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Date</th>
+                        <th class="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Voucher Type</th>
+                        <th class="px-4 py-3 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ref #</th>
+                        <th class="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Account</th>
+                        <th class="px-4 py-3 text-right text-[10px] font-bold text-emerald-500 uppercase tracking-widest whitespace-nowrap">Debit (Dr)</th>
+                        <th class="px-4 py-3 text-right text-[10px] font-bold text-red-500 uppercase tracking-widest whitespace-nowrap">Credit (Cr)</th>
+                        <th class="px-4 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Running Bal.</th>
+                        <th class="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Remarks</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50">
+                    {% for entry in page_obj %}
+                    <tr class="hover:bg-gray-50/70 transition-colors group">
+
+                        {# Date #}
+                        <td class="px-5 py-3.5 text-xs text-gray-500 font-medium whitespace-nowrap">{{ entry.created_at|date:"d M Y" }}<br><span class="text-[10px] text-gray-300">{{ entry.created_at|time:"H:i" }}</span></td>
+
+                        {# Voucher Type — links to GL filtered by this voucher type #}
+                        <td class="px-4 py-3.5 whitespace-nowrap">
+                            <a href="{% url 'general_ledger' %}?voucher_type={{ entry.reference_type }}" class="text-xs font-bold text-gray-700 hover:text-blue-600 transition-colors">{{ entry.reference_type }}</a>
+                        </td>
+
+                        {# Ref # — jump-to-source link #}
+                        <td class="px-4 py-3.5 text-center">
+                            <a href="{% url 'resolve_source_document' entry.reference_type entry.reference_id %}" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gray-50 group-hover:bg-blue-50 text-xs font-bold text-gray-500 group-hover:text-blue-600 transition-colors border border-gray-100 group-hover:border-blue-200">{{ entry.reference_id }}</a>
+                        </td>
+
+                        {# Account #}
+                        <td class="px-4 py-3.5">
+                            <span class="text-sm font-bold text-gray-900">{{ entry.account.name }}</span>
+                            <span class="ml-1.5 text-[9px] font-bold text-gray-300 uppercase tracking-widest">{{ entry.account.get_account_type_display }}</span>
+                        </td>
+
+                        {# Debit #}
+                        <td class="px-4 py-3.5 text-right">{% if entry.debit > 0 %}<span class="text-sm font-bold text-emerald-700">{{ entry.debit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+
+                        {# Credit #}
+                        <td class="px-4 py-3.5 text-right">{% if entry.credit > 0 %}<span class="text-sm font-bold text-red-500">{{ entry.credit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+
+                        {# Running Balance #}
+                        <td class="px-4 py-3.5 text-right whitespace-nowrap">{% if entry.running_balance > 0 %}<span class="text-sm font-semibold text-emerald-700">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% elif entry.running_balance < 0 %}<span class="text-sm font-semibold text-red-500">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-300 text-sm">0.00</span>{% endif %}</td>
+
+                        {# Remarks #}
+                        <td class="px-5 py-3.5 text-xs text-gray-400 font-medium max-w-[200px] truncate" title="{{ entry.remarks }}">{{ entry.remarks|default:"—"|truncatechars:48 }}</td>
+
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {# ── Pagination ──────────────────────────────────────────────────── #}
+        {% if page_obj.has_other_pages %}
+        <div class="px-6 py-4 border-t border-gray-50 flex items-center justify-between">
+            <div class="text-xs text-gray-400 font-medium">
+                Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} entries
+            </div>
+            <div class="flex items-center gap-2">
+                {% if page_obj.has_previous %}
+                <a href="?{{ pagination_prefix }}page={{ page_obj.previous_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">&larr; Prev</a>
+                {% endif %}
+                <span class="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+                {% if page_obj.has_next %}
+                <a href="?{{ pagination_prefix }}page={{ page_obj.next_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">Next &rarr;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        {# Empty state #}
+        <div class="py-16 text-center">
+            <div class="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                <svg class="w-6 h-6 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <p class="text-gray-400 font-medium text-sm">No GL entries match your filters.</p>
+            <a href="{% url 'general_ledger' %}" class="mt-3 inline-block text-xs font-bold text-blue-600 hover:underline">Clear all filters</a>
+        </div>
+        {% endif %}
+
+    </div>
+
+    {# ── Validate Ledger ─────────────────────────────────────────────────── #}
+    <div class="bg-white rounded-2xl border border-gray-100 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="font-bold text-gray-900 text-sm">Integrity Check</h2>
+                <p class="text-xs text-gray-400 font-medium mt-0.5">Run Rule-15 health checks against live data</p>
+            </div>
+            <button hx-get="{% url 'validate_ledger' %}" hx-target="#validate-results" hx-swap="innerHTML" hx-indicator="#validate-spinner" class="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-700 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Validate Ledger
+                <svg id="validate-spinner" class="w-4 h-4 animate-spin htmx-indicator hidden" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            </button>
+        </div>
+        <div id="validate-results" class="text-xs text-gray-400 font-medium">
+            Click "Validate Ledger" to run integrity checks.
+        </div>
+    </div>
+
+</div>
+</div>
+{% endblock %}

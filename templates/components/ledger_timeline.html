@@ -59,7 +59,7 @@
                     {% endif %}
                     <div>
                         <p class="text-sm font-bold text-gray-900">{{ entry.account.name }}</p>
-                        <p class="text-[10px] text-gray-400 font-medium">{{ entry.reference_type }} #{{ entry.reference_id }}</p>
+                        <a href="{% url 'resolve_source_document' entry.reference_type entry.reference_id %}" class="text-[10px] text-blue-500 hover:text-blue-700 font-medium hover:underline transition-colors">{{ entry.reference_type }} #{{ entry.reference_id }}</a>
                     </div>
                 </div>
                 <div class="text-right">

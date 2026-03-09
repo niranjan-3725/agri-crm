@@ -231,9 +231,14 @@
                         {% if recon.warehouse %} · {{ recon.warehouse.name }}{% endif %}
                     </div>
                 </div>
-                <div class="text-[10px] text-gray-400 font-medium text-right">
-                    {{ recon.created_at|date:"d M Y" }}<br>
-                    <span class="text-gray-300">{{ recon.created_at|time:"H:i" }}</span>
+                <div class="text-right">
+                    <div class="text-[10px] text-gray-400 font-medium">
+                        {{ recon.created_at|date:"d M Y" }}<br>
+                        <span class="text-gray-300">{{ recon.created_at|time:"H:i" }}</span>
+                    </div>
+                    {% if recon.delta != 0 %}
+                    <a href="{% url 'general_ledger' %}?voucher_type=StockReconciliation&ref_id={{ recon.id }}" class="mt-1.5 inline-block text-[10px] font-bold text-blue-500 hover:text-blue-700 hover:underline transition-colors">View GL &rarr;</a>
+                    {% endif %}
                 </div>
             </div>
             {% endfor %}

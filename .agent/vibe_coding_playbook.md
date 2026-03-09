@@ -754,7 +754,289 @@ Per Rule 9.1, after recording a customer receipt, the system MUST redirect to th
 
 ---
 
+---
+
+## 14. The Return Cancel Double-Posting Bug
+
+**[DISCOVERED 2026-03-09 — System-Wide GL Reconciliation Audit]**
+
+### 14.1 — Root Cause
+
+When `PurchaseReturn.cancel()` or `SalesReturn.cancel()` runs, it makes **two separate calls that both reverse the stock-level GL entries**, inflating the Stock In Hand account balance by the full return value.
+
+**Broken sequence (PurchaseReturn.cancel):**
+```
+1. process_stock_movement('PurchaseReturnCancel', qty=+5)
+       → post_stock_gl('PurchaseReturnCancel', ...) → Dr Stock In Hand 4,485  ✓
+
+2. reverse_document_gl('PurchaseReturn', id)
+       → sweeps ALL GL entries tagged reference_type='PurchaseReturn'
+       → includes the stock GL entry (Cr Stock In Hand 4,485) from submit time
+       → posts reversal: Dr Stock In Hand 4,485  ← DUPLICATE!
+```
+
+**Net result:** Stock In Hand is Dr'd Rs.8,970 when it should only be Rs.4,485.
+The GL `Stock In Hand` balance is inflated by exactly the return value. The StockBin MAP value (ground truth) will be lower by the same amount.
+
+**Evidence in DB (discovered audit 2026-03-09):**
+- GL#107: `PurchaseReturnCancel/6`  Dr Stock In Hand 4,485 (correct — from process_stock_movement)
+- GL#110: `PurchaseReturn/6` Dr Stock In Hand 4,485 (spurious — from reverse_document_gl sweeping stock entries)
+
+### 14.2 — Fix Pattern
+
+`reverse_document_gl()` must exclude stock-level GL accounts when the cancel path already handles stock reversal via `process_stock_movement()`. Add an `exclude_account_names` parameter:
+
+```python
+# accounting/services.py — add exclude_account_names parameter
+def reverse_document_gl(reference_type, reference_id, exclude_account_names=None):
+    originals = list(
+        GLEntry.objects.filter(
+            reference_type=reference_type,
+            reference_id=reference_id,
+        ).order_by('pk')
+    )
+    if exclude_account_names:
+        originals = [e for e in originals if e.account.name not in exclude_account_names]
+    # ... rest unchanged
+```
+
+```python
+# transactions/models.py — PurchaseReturn.cancel() and SalesReturn.cancel()
+STOCK_GL_ACCOUNTS = [
+    'Stock In Hand',
+    'Stock Received But Not Billed',
+    'Stock Delivered But Not Billed',
+    'Cost of Goods Sold',
+]
+
+# In cancel():
+# 1. process_stock_movement handles stock GL reversal
+# 2. reverse_document_gl handles ONLY the financial entries (AP/AR/Tax)
+reverse_document_gl(
+    'PurchaseReturn', self.id,
+    exclude_account_names=STOCK_GL_ACCOUNTS,   # ← prevent double-posting
+)
+```
+
+### 14.3 — Affected Documents
+
+| Document | Cancel method | Double-posts | Status |
+|---|---|---|---|
+| `PurchaseReturn` | `cancel()` | Dr Stock In Hand | **BUG — FIX REQUIRED** |
+| `SalesReturn` | `cancel()` | Cr Stock In Hand | **LATENT BUG** (no SUBMITTED SalesReturns in DB yet) |
+| `PurchaseInvoice` | `cancel()` → delegates to `PurchaseReceipt.cancel()` | N/A | No issue — stock GL handled inside PurchaseReceipt |
+| `SalesInvoice` | `cancel()` → delegates to `DeliveryNote.cancel()` | N/A | No issue — stock GL handled inside DeliveryNote |
+
+### 14.4 — Detection Command
+
+Run this after every Return cancel to detect the double-posting:
+
+```bash
+venv/Scripts/python -c "
+import os, sys, django
+os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+sys.path.insert(0, '.')
+django.setup()
+from django.db.models import Sum
+from accounting.models import GLEntry, Account
+sih = Account.objects.get(name='Stock In Hand')
+
+# Find all PurchaseReturn cancel events with duplicate Stock In Hand Dr entries
+from itertools import groupby
+entries = GLEntry.objects.filter(
+    account=sih,
+    reference_type__in=['PurchaseReturn', 'SalesReturn', 'PurchaseReturnCancel', 'SalesReturnCancel'],
+).values('reference_type', 'reference_id').annotate(net=Sum('debit') - Sum('credit'))
+for e in entries:
+    print(e)
+"
+```
+
+---
+
+## 15. System-Wide GL Health Check Commands
+
+**[Added 2026-03-09 — Run after every sprint merge to main]**
+
+### Full reconciliation audit:
+```bash
+cd C:\agri_crm
+venv/Scripts/python audit_gl_reconciliation.py
+```
+**Expected output:** `[PASS] CLEAN BILL OF HEALTH` across all 5 checks.
+**Any `[CRITICAL ERROR]`:** Stop, investigate, fix before merging.
+
+### Quick double-entry balance check:
+```bash
+venv/Scripts/python -c "
+import os, sys, django
+os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+sys.path.insert(0, '.')
+django.setup()
+from django.db.models import Sum
+from accounting.models import GLEntry
+from decimal import Decimal
+groups = GLEntry.objects.values('reference_type', 'reference_id').annotate(
+    dr=Sum('debit'), cr=Sum('credit')
+)
+unbalanced = [g for g in groups if abs((g['dr'] or 0) - (g['cr'] or 0)) > Decimal('1')]
+if unbalanced:
+    print(f'CRITICAL: {len(unbalanced)} unbalanced GL group(s):')
+    for g in unbalanced: print(g)
+else:
+    print(f'PASS: All {groups.count()} GL groups balanced.')
+"
+```
+
+### Inventory valuation vs GL check:
+```bash
+venv/Scripts/python -c "
+import os, sys, django
+os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+sys.path.insert(0, '.')
+django.setup()
+from django.db.models import Sum, F, DecimalField, ExpressionWrapper
+from accounting.models import GLEntry, Account
+from inventory.models import StockBin
+from decimal import Decimal
+map_val = StockBin.objects.filter(actual_qty__gt=0).annotate(
+    bv=ExpressionWrapper(F('actual_qty') * F('batch__product__moving_average_price'),
+    output_field=DecimalField(max_digits=15, decimal_places=2))
+).aggregate(t=Sum('bv'))['t'] or Decimal('0')
+sih = Account.objects.get(name='Stock In Hand')
+gl = GLEntry.objects.filter(account=sih).aggregate(dr=Sum('debit'), cr=Sum('credit'))
+gl_net = (gl['dr'] or 0) - (gl['cr'] or 0)
+diff = abs(map_val - gl_net)
+print(f'StockBin MAP value: {map_val:.2f}  |  GL Stock In Hand: {gl_net:.2f}  |  Delta: {diff:.2f}')
+if diff > 1: print('WARN: Delta > Rs.1 — check for Return cancel double-posting (Rule 14)')
+else: print('PASS: Inventory valuation balanced.')
+"
+```
+
+### Payment status integrity check:
+```bash
+venv/Scripts/python -c "
+import os, sys, django
+os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings'
+sys.path.insert(0, '.')
+django.setup()
+from django.db.models import Sum
+from transactions.models import SalesInvoice
+from decimal import Decimal
+errors = 0
+for inv in SalesInvoice.objects.filter(status='SUBMITTED'):
+    paid = inv.payments.filter(status='SUBMITTED').aggregate(t=Sum('amount'))['t'] or Decimal('0')
+    expected = Decimal(str(inv.grand_total)) - paid
+    if abs(expected - Decimal(str(inv.balance_due))) > Decimal('1'):
+        print(f'CRITICAL: SI#{inv.id} balance_due={inv.balance_due} expected={expected}')
+        errors += 1
+print(f'Payment integrity: {errors} error(s).' if errors else 'PASS: All payment balances correct.')
+"
+```
+
+---
+
+## 16. Centralized Navigation Routing (resolve_source_document)
+
+**[IMPLEMENTED 2026-03-09 — General Ledger UI Sprint 19]**
+
+### 16.1 — The Problem: Hardcoded URL Coupling
+
+Every `GLEntry` carries a `reference_type` string (e.g. `'SalesInvoice'`) and a `reference_id` integer.
+Without a central router, every template that links back to the source document must hardcode its URL pattern:
+
+```html
+<!-- ✗ WRONG — N x M coupling; every template must know every document type's URL -->
+{% if entry.reference_type == 'SalesInvoice' %}
+<a href="{% url 'invoice_detail' pk=entry.reference_id %}">View</a>
+{% elif entry.reference_type == 'PurchaseInvoice' %}
+<a href="{% url 'purchase_detail' pk=entry.reference_id %}">View</a>
+{% endif %}
+```
+
+Adding a new document type requires hunting down and updating every template. Renaming a URL name breaks every template silently.
+
+### 16.2 — The Solution: One Router, One Link Pattern
+
+`resolve_source_document(request, reference_type, reference_id)` in `accounting/views.py` is the **single source of truth** for all GL to source-document navigation.
+
+**In every template — always one link, regardless of document type:**
+```html
+<!-- ✓ CORRECT — template is fully decoupled from URL structure -->
+<a href="{% url 'resolve_source_document' entry.reference_type entry.reference_id %}">{{ entry.reference_type }} #{{ entry.reference_id }}</a>
+```
+
+**URL pattern:** `/accounting/gl/resolve/<str:reference_type>/<int:reference_id>/`
+
+**Rule:** Never link directly to a document detail URL from any GL-adjacent component (Ledger Timeline, General Ledger table, etc.). Always route through `resolve_source_document`.
+
+### 16.3 — The Registry (Canonical URL Name Table)
+
+Maintained in `accounting/views.py` in `_DETAIL_ROUTE_MAP`. These are the **verified** URL names from `transactions/urls.py`:
+
+| `reference_type` | URL name | URL path |
+|---|---|---|
+| `SalesInvoice` | `invoice_detail` | `/sales/<pk>/` |
+| `PurchaseInvoice` | `purchase_detail` | `/purchases/<pk>/` |
+| `SalesReturn` | `sales_return_detail` | `/returns/sales/<pk>/` |
+| `PurchaseReturn` | `purchase_return_detail` | `/returns/purchase/<pk>/` |
+| `CustomerPayment` | `customer_payment_detail` | `/receipts/<pk>/` |
+| `SupplierPayment` | `supplier_payment_detail` | `/payments/<pk>/` |
+| `DeliveryNote` | `delivery_note_detail` | `/delivery-notes/<pk>/` |
+| `PurchaseReceipt` | `purchase_receipt_detail` | `/purchase-receipts/<pk>/` |
+| `StockReconciliation` | *(DB lookup to `batch_detail`)* | `/inventory/<batch_id>/` |
+
+**Cancel variants** are normalised to their base type (the document PK is unchanged across submit/cancel):
+
+| Cancel `reference_type` | Normalised to |
+|---|---|
+| `DeliveryNoteCancel` | `DeliveryNote` |
+| `PurchaseReceiptCancel` | `PurchaseReceipt` |
+| `SalesReturnCancel` | `SalesReturn` |
+| `PurchaseReturnCancel` | `PurchaseReturn` |
+
+### 16.4 — Adding a New Module
+
+When a new document type posts GL entries, extend both dicts in `accounting/views.py`:
+
+```python
+# Step 1 — add to the route map
+_DETAIL_ROUTE_MAP = {
+    ...
+    'NewDocument': ('new_document_detail', 'pk'),   # add here
+}
+
+# Step 2 — if it has a Cancel variant that posts under its own reference_type
+_CANCEL_TO_BASE = {
+    ...
+    'NewDocumentCancel': 'NewDocument',             # add here
+}
+```
+
+**No template changes required.** The router handles the redirect automatically.
+
+### 16.5 — Graceful Failure Modes
+
+| Scenario | Behaviour |
+|---|---|
+| Unknown `reference_type` | Redirect to `/accounting/ledger/?voucher_type=X&ref_id=Y` (shows all GL for that voucher) |
+| `StockReconciliation` with missing batch | 404 via `get_object_or_404` |
+| `NoReverseMatch` (URL was renamed/removed) | Redirect to filtered GL (same as unknown type) |
+
+**Why redirect to the GL instead of raising 404?** An unknown type means the router registry is out of date, not that the data is corrupt. Showing the raw GL entries lets the developer diagnose the issue without a blank error page.
+
+### 16.6 — Template Integration (Ledger Timeline)
+
+`ledger_timeline.html` uses the router for every GL entry reference link — a single line that covers all document types:
+
+```html
+<a href="{% url 'resolve_source_document' entry.reference_type entry.reference_id %}" class="text-[10px] text-blue-500 hover:text-blue-700 font-medium hover:underline transition-colors">{{ entry.reference_type }} #{{ entry.reference_id }}</a>
+```
+
+---
+
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
-- **Last Updated** — 2026-03-08 (Receivables Phase 3 — Rule 13.8 Ledger Timeline mandatory in all financial detail views added)
+- **Audit Script** — `C:\agri_crm\audit_gl_reconciliation.py` (read-only; run after every sprint)
+- **Last Updated** — 2026-03-09 (Sprint 19: GL UI — Rule 16 Centralized Navigation Routing)
