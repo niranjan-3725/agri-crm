@@ -46,26 +46,31 @@ def update_sales_invoice_payment_status(sender, instance, **kwargs):
     
     # Update Invoice (Only if tied to invoice)
     if invoice:
-        # Calculate total received
-        total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        
+        # Rule 13.4 (Playbook): Only SUBMITTED payments reduce the balance.
+        # CANCELLED payments must not inflate amount_received.
+        total_received = (
+            invoice.payments
+            .filter(status='SUBMITTED')
+            .aggregate(total=Sum('amount'))['total']
+        ) or Decimal('0.00')
+
         # Update fields
         invoice.amount_received = total_received
         invoice.balance_due = invoice.grand_total - total_received
-        
+
         # Determine status
         if invoice.balance_due <= Decimal('0.01'):
             invoice.payment_status = 'PAID'
             if invoice.balance_due < 0:
                 invoice.balance_due = 0
         elif invoice.balance_due == invoice.grand_total:
-             if invoice.grand_total > 0:
+            if invoice.grand_total > 0:
                 invoice.payment_status = 'UNPAID'
-             else:
+            else:
                 invoice.payment_status = 'PAID'
         else:
             invoice.payment_status = 'PARTIAL'
-            
+
         invoice.save()
 
 @receiver([post_save, post_delete], sender=SupplierPayment)

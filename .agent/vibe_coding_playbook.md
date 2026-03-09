@@ -338,6 +338,18 @@ grep -rn "redirect('dashboard')" transactions/ inventory/
 # Zero results = clean. Any result = likely a bug.
 ```
 
+**Receivables module — Rule 9.1 compliance (Phase 4, Fixed):**
+
+| View | Old redirect | Correct redirect (Rule 9.1) |
+|---|---|---|
+| `record_receipt` (HTMX) | — | 204 + `HX-Redirect` → `customer_payment_detail` ✓ |
+| `record_receipt` (non-HTMX) | `invoice_detail` | `customer_payment_detail` ✓ |
+| `cancel_customer_payment` (success) | `invoice_detail` | `customer_payment_detail` ✓ |
+| `cancel_customer_payment` (error) | `invoice_detail` / `customer_ledger` | unchanged (no document created) ✓ |
+| `delete_customer_payment` | delegates to cancel | deprecated, logs warning, delegates to cancel ✓ |
+
+See also Rule 13.6 (CustomerPayment Detail View Is Mandatory) and Rule 13.7 (Alpine fetch() redirect pattern).
+
 ---
 
 ### Rule 9.2 — Filter Active Documents Only in Lookups
@@ -577,6 +589,150 @@ And assert `status_code == 204` (not 200) since `record_payment` returns 204 + H
 ---
 
 
+## 13. The Receivables (Customer Payment) Rules
+
+**[AUDITED 2026-03-08 — Receivables Module Audit]**
+
+### 13.1 — CustomerPayment Must Have a Status Field
+
+`CustomerPayment` MUST have `status = CharField(choices=[('SUBMITTED','Submitted'),('CANCELLED','Cancelled')], default='SUBMITTED')`. Without it:
+- Hard-delete is the only way to "undo" a payment, which orphans GL entries.
+- The invoice-balance signal cannot filter CANCELLED payments, causing overcounting.
+
+```python
+# ✓ CORRECT pattern (mirrors SupplierPayment)
+class CustomerPayment(models.Model):
+    STATUS_CHOICES = [('SUBMITTED', 'Submitted'), ('CANCELLED', 'Cancelled')]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='SUBMITTED')
+
+    def cancel(self):
+        if self.status != 'SUBMITTED':
+            raise ValidationError("Only SUBMITTED payments can be cancelled.")
+        with transaction.atomic():
+            GLEntry.objects.filter(reference_type='CustomerPayment', reference_id=self.id).delete()
+            self.status = 'CANCELLED'
+            self.save(update_fields=['status'])
+```
+
+### 13.2 — GL ORPHAN: Never Hard-Delete a CustomerPayment Without Reversing GL First
+
+`delete_customer_payment` that calls `payment.delete()` without first deleting `GLEntry` rows **permanently corrupts the Cash/Bank and Accounts Receivable ledger accounts**.
+
+```python
+# ✗ WRONG — orphans GL entries, permanently corrupts AR/Cash
+payment.delete()
+
+# ✓ CORRECT — reverse GL first (for legacy hard-delete), or use cancel()
+GLEntry.objects.filter(reference_type='CustomerPayment', reference_id=payment.id).delete()
+payment.delete()
+
+# ✓ BEST — use the state machine cancel() method (preserves audit trail)
+payment.cancel()  # atomically deletes GL + sets status=CANCELLED
+```
+
+### 13.3 — record_receipt Must Guard invoice.status == 'SUBMITTED'
+
+Any view that creates a `CustomerPayment` MUST first verify the linked `SalesInvoice` is SUBMITTED. A DRAFT or CANCELLED invoice can silently accept payments otherwise.
+
+```python
+# ✓ Required guard at the top of record_receipt
+if invoice.status != 'SUBMITTED':
+    return JsonResponse({'success': False, 'error': 'Receipts can only be recorded against a submitted invoice.'}, status=400)
+```
+
+### 13.4 — CustomerPayment Signal Must Filter by Status
+
+The `update_sales_invoice_payment_status` signal MUST filter `status='SUBMITTED'` when summing payments. See Rule 12.3 (SupplierPayment) for the identical pattern.
+
+```python
+# ✗ WRONG — includes CANCELLED payments
+total_received = invoice.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+# ✓ CORRECT
+total_received = invoice.payments.filter(status='SUBMITTED').aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+```
+
+### 13.5 — customer_ledger total_due Must Filter by invoice status='SUBMITTED'
+
+The `total_due` annotation in `customer_ledger` must include `salesinvoice__status='SUBMITTED'` alongside `payment_status`. A CANCELLED invoice retains its last `payment_status` value and will silently inflate displayed receivables if status is not checked.
+
+```python
+# ✓ CORRECT
+Sum('salesinvoice__balance_due', filter=Q(
+    salesinvoice__payment_status__in=['UNPAID', 'PARTIAL'],
+    salesinvoice__status='SUBMITTED',
+))
+```
+
+### 13.6 — CustomerPayment Detail View Is Mandatory
+
+Per Rule 9.1, after recording a customer receipt, the system MUST redirect to the `customer_payment_detail` view (not to `invoice_detail` or `customer_ledger`). This view must expose the `ledger_timeline.html` component showing `Dr Cash/Bank → Cr AR` entries, a cancel button, and a link back to the parent invoice.
+
+### 13.7 — Quick Receipt Modal: Alpine fetch() Pattern (Modal-to-Detail-Redirect)
+
+**Do NOT use `:hx-post` + `htmx.process()` for modals with dynamic POST URLs.** The bug: `htmx.process($el)` fires at page-load when `receiptActionUrl=''`, so HTMX registers the form with `hx-post=""`. The submit button click triggers HTMX with the wrong empty URL — no POST is ever sent to the real endpoint.
+
+**Correct pattern:** Use Alpine `@submit.prevent` + `fetch()`. Alpine reads `receiptActionUrl` from its reactive scope at submit time — no DOM attribute binding race condition:
+
+```html
+<form @submit.prevent="
+        receiptError = '';
+        const fd = new FormData($el);
+        fetch(receiptActionUrl, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': fd.get('csrfmiddlewaretoken'),
+                'HX-Request': 'true'
+            },
+            body: fd
+        }).then(async r => {
+            if (r.status === 204) {
+                const redirect = r.headers.get('HX-Redirect');
+                if (redirect) window.location.href = redirect;
+            } else {
+                try { receiptError = (await r.json()).error || 'An error occurred.'; }
+                catch(e) { receiptError = 'An unexpected error occurred.'; }
+            }
+        }).catch(() => { receiptError = 'Network error. Please try again.'; })">
+```
+
+**Why Alpine fetch() is correct for dynamic-URL modals:**
+- URL is read from the Alpine variable at submit time (reactive), never from a DOM attribute
+- `ERR_ABORTED` on the fetch after `window.location.href` is set is normal and expected
+- Server: return `HttpResponse(status=204)` with `response['HX-Redirect'] = reverse(...)` on success
+- Server: return `JsonResponse({'error': '...'}, status=400)` on validation failure
+- `HX-Request: true` header tells `record_receipt` to return JSON errors instead of Django messages
+
+**GL Impact Preview Banner:** Show a live `Dr / Cr` preview inside the modal using `Math.min(parseFloat(amount), balanceDue)` as the effective posted amount. Overpayment excess displays as `+ Wallet Credit`. Use `bg-blue-50`, `font-mono`, `text-blue-800`.
+
+**Collected This Month / Recent Receipts stats** MUST filter `status='SUBMITTED'` — cancelled payments must never inflate these figures (Rule 13.4).
+
+### 13.8 — Every Financial Document Detail View Must Include the Ledger Timeline
+
+**Rule:** Every detail view for a financial document (CustomerPayment, SupplierPayment, SalesInvoice, PurchaseInvoice, SalesReturn, PurchaseReturn) **must** include `components/ledger_timeline.html` so the double-entry GL impact is always visible and verifiable.
+
+**Why:** Without the timeline, a developer has no in-UI confirmation that double-entry integrity is maintained. The timeline serves as both a UX transparency feature and a live audit trail.
+
+**Implementation checklist:**
+1. View fetches `GLEntry` rows filtered by `reference_type` + `reference_id` for the document:
+   ```python
+   gl_entries = list(GLEntry.objects.filter(
+       reference_type='CustomerPayment', reference_id=payment.id
+   ).select_related('account').order_by('created_at'))
+   gl_total_debit  = sum(e.debit  for e in gl_entries)
+   gl_total_credit = sum(e.credit for e in gl_entries)
+   ```
+2. Template passes all four variables to the include on **one line** (Rule 1):
+   ```html
+   {% include 'components/ledger_timeline.html' with gl_entries=gl_entries stock_movements=None gl_total_debit=gl_total_debit gl_total_credit=gl_total_credit %}
+   ```
+3. The impact banner above the timeline must describe the exact Dr/Cr pair in human-readable form so the user can cross-reference the timeline rows.
+4. For CANCELLED documents, show the reversal entries in the timeline (they are posted automatically by `payment.cancel()`); the banner must switch to the red "Cancelled" variant.
+
+**Anti-pattern:** Returning the detail view without `gl_entries` in context causes the timeline component to silently render empty. Always assert `len(gl_entries) > 0` in tests for SUBMITTED documents.
+
+---
+
 ## Quick Diagnostic Checklist
 
 ### Bug appears fixed in code but still happens in browser:
@@ -601,4 +757,4 @@ And assert `status_code == 204` (not 200) since `record_payment` returns 204 + H
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
-- **Last Updated** — 2026-03-08 (Payables Refactor — Rule 12 added)
+- **Last Updated** — 2026-03-08 (Receivables Phase 3 — Rule 13.8 Ledger Timeline mandatory in all financial detail views added)

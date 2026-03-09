@@ -1957,61 +1957,125 @@ def create_product(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
 
-# Sprint 40: Customer Payments
+# REC-03 (Playbook Rule 13.3 + Rule 5): Atomic receipt entry with SUBMITTED-invoice guard.
+@require_POST
 def record_receipt(request, pk):
     invoice = get_object_or_404(SalesInvoice, pk=pk)
-    if request.method == 'POST':
-        try:
-            amount = Decimal(request.POST.get('amount'))
-            payment_mode = request.POST.get('payment_mode')
-            payment_date = request.POST.get('payment_date') or timezone.now().date()
-            notes = request.POST.get('notes')
 
-            # Sprint 49: Universal Zero-Negative Safeguard
-            if amount <= 0:
-                 return JsonResponse({'success': False, 'error': 'Payment must be positive.'}, status=400)
-            
-            # Sprint 47: Smart Overpayment Handling
-            excess_amount = amount - invoice.balance_due
-            payment_amount = amount
+    # Rule 9.2 / Rule 13.3: Only SUBMITTED invoices are eligible for payment.
+    if invoice.status != 'SUBMITTED':
+        return JsonResponse(
+            {'success': False, 'error': 'Receipts can only be recorded against a submitted invoice.'},
+            status=400,
+        )
 
-            if excess_amount > 0:
-                payment_amount = invoice.balance_due
-                # Credit excess to wallet
-                if invoice.customer:
-                    customer = invoice.customer
-                    customer.wallet_balance += excess_amount
-                    customer.save()
-                    notes = f"{notes} (Overpayment of ₹{excess_amount} added to Wallet)" if notes else f"(Overpayment of ₹{excess_amount} added to Wallet)"
-            
-            CustomerPayment.objects.create(
+    try:
+        amount = Decimal(request.POST.get('amount', '0'))
+        payment_mode = request.POST.get('payment_mode', 'CASH')
+        payment_date = request.POST.get('payment_date') or timezone.now().date()
+        notes = request.POST.get('notes', '')
+
+        if amount <= 0:
+            return JsonResponse(
+                {'success': False, 'error': 'Payment amount must be greater than zero.'},
+                status=400,
+            )
+
+        # Smart overpayment handling: cap at balance_due, credit excess to wallet.
+        payment_amount = amount
+        if amount > invoice.balance_due:
+            excess = amount - invoice.balance_due
+            payment_amount = invoice.balance_due
+            if invoice.customer_id:
+                customer = invoice.customer
+                customer.wallet_balance += excess
+                customer.save()
+                notes = (
+                    f"{notes} (Overpayment ₹{excess} → Wallet)"
+                    if notes else f"Overpayment ₹{excess} added to Wallet"
+                )
+
+        # Rule 5: payment row + GL entries land atomically.
+        with transaction.atomic():
+            payment = CustomerPayment.objects.create(
                 invoice=invoice,
                 amount=payment_amount,
                 payment_mode=payment_mode,
                 payment_date=payment_date,
-                notes=notes
+                notes=notes,
+                status='SUBMITTED',
             )
-            messages.success(request, f"Receipt of ₹{amount} recorded successfully.")
-        except Exception as e:
-            messages.error(request, f"Error recording receipt: {str(e)}")
-            
+
+        # Rule 9.1 + Rule 12.4: always land on customer_payment_detail.
+        # HTMX modal path: 204 + HX-Redirect (Alpine fetch() reads the header).
+        # Non-HTMX path: standard 302 redirect.
+        if request.headers.get('HX-Request'):
+            from django.urls import reverse
+            response = HttpResponse(status=204)
+            response['HX-Redirect'] = reverse('customer_payment_detail', kwargs={'pk': payment.pk})
+            return response
+
+        messages.success(request, f"Receipt of ₹{payment_amount} recorded successfully.")
+        return redirect('customer_payment_detail', pk=payment.pk)
+
+    except Exception as e:
+        if request.headers.get('HX-Request'):
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        messages.error(request, f"Error recording receipt: {str(e)}")
+
     return redirect('invoice_detail', pk=pk)
 
-@csrf_exempt
+
+# REC-04 (Playbook Rule 13.2): Cancel reverses GL; hard-delete is forbidden on SUBMITTED payments.
+@require_POST
+def cancel_customer_payment(request, pk):
+    payment = get_object_or_404(CustomerPayment, pk=pk)
+    try:
+        payment.cancel()
+        messages.success(request, "Receipt cancelled and GL entries reversed.")
+        # Rule 9.1: land on the same detail page so the user sees the CANCELLED badge.
+        return redirect('customer_payment_detail', pk=pk)
+    except ValidationError as e:
+        messages.error(request, str(e))
+    # Fallback on error: go to the linked invoice (payment was not cancelled).
+    if payment.invoice_id:
+        return redirect('invoice_detail', pk=payment.invoice_id)
+    return redirect('customer_ledger')
+
+
+# DEPRECATED — use cancel_customer_payment instead.
+# Kept only for backward-compat; no template should call this URL any more.
 @require_POST
 def delete_customer_payment(request, pk):
-    from django.db.models import ProtectedError
-    
+    import logging
+    logging.getLogger(__name__).warning(
+        "delete_customer_payment (receipt/<pk>/delete/) is deprecated. "
+        "Use cancel_customer_payment (receipts/<pk>/cancel/) instead. pk=%s", pk
+    )
+    return cancel_customer_payment(request, pk)
+
+
+def customer_payment_detail(request, pk):
+    """Detail view for a single CustomerPayment with its GL ledger timeline."""
+    from accounting.models import GLEntry
+    from django.urls import reverse
+
     payment = get_object_or_404(CustomerPayment, pk=pk)
-    invoice_pk = payment.invoice.pk
-    
-    try:
-        payment.delete()
-        messages.success(request, "Payment deleted successfully.")
-    except ProtectedError:
-        messages.error(request, "Cannot delete this payment because it has been reversed. Please delete the Reversal entry first.")
-        
-    return redirect('invoice_detail', pk=invoice_pk)
+    gl_entries = list(GLEntry.objects.filter(
+        reference_type='CustomerPayment', reference_id=payment.id
+    ).select_related('account').order_by('created_at'))
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
+    return render(request, 'transactions/customer_payment_detail.html', {
+        'payment': payment,
+        'gl_entries': gl_entries,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
+        'cancel_url': reverse('cancel_customer_payment', kwargs={'pk': payment.pk}),
+    })
+
 
 def customer_ledger(request):
     """
@@ -2066,14 +2130,18 @@ def customer_ledger(request):
         total_advances = 0
     
     # Sprint 46: Collection KPIs
+    # Rule 13.4: Only SUBMITTED payments count toward stats.
     # Collected this month (exclude WALLET - only real cash/UPI flow)
     collected_this_month = CustomerPayment.objects.filter(
+        status='SUBMITTED',
         payment_date__year=now.year,
         payment_date__month=now.month
     ).exclude(payment_mode='WALLET').aggregate(Sum('amount'))['amount__sum'] or 0
-    
+
     # Recent receipts for activity timeline (last 10)
-    recent_receipts = CustomerPayment.objects.select_related(
+    recent_receipts = CustomerPayment.objects.filter(
+        status='SUBMITTED'
+    ).select_related(
         'invoice', 'invoice__customer'
     ).order_by('-created_at')[:10]
     
