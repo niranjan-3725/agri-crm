@@ -713,6 +713,138 @@ Per Rule 9.1, after recording a customer receipt, the system MUST redirect to th
 
 **Why:** Without the timeline, a developer has no in-UI confirmation that double-entry integrity is maintained. The timeline serves as both a UX transparency feature and a live audit trail.
 
+---
+
+## 18. ERPNext Parity Rules
+
+**[ADDED 2026-03-11 — ERPNext Architectural Audit Results]**
+
+### 18.1 — Chronological Moving Average Calculation
+
+**Problem:** Backdated entries can corrupt moving average calculations if processed out of chronological order.
+
+**ERPNext Pattern:** `repost_item_valuation` processes entries sequentially by timestamp, recalculating all future valuations to maintain consistency.
+
+**AgriCRM Rule:** When recalculating moving averages, always consider the chronological order of entries, not just the current state. Backdated entries must trigger repost of all future valuations.
+
+```python
+# ✗ WRONG — uses current state, ignores chronology
+old_total_qty = Batch.objects.filter(product=product).aggregate(total=Sum('current_quantity'))['total']
+
+# ✓ CORRECT — considers chronological order
+old_total_qty = (
+    StockMovement.objects
+    .filter(batch__product=product, created_at__lte=entry_timestamp)
+    .aggregate(total=Sum('quantity'))['total']
+) or 0
+```
+
+### 18.2 — Valuation Method Flexibility
+
+**Problem:** Hardcoding to Moving Average only limits compliance with different accounting standards.
+
+**ERPNext Pattern:** `Item.valuation_method` field supports FIFO, Moving Average, and other methods.
+
+**AgriCRM Rule:** Support multiple valuation methods at the product level. Never hardcode valuation logic to a single method.
+
+```python
+# Add to Product model
+class Product(models.Model):
+    VALUATION_METHOD_CHOICES = [
+        ('MOVING_AVERAGE', 'Moving Average'),
+        ('FIFO', 'First In First Out'),
+    ]
+    valuation_method = models.CharField(
+        max_length=20, 
+        choices=VALUATION_METHOD_CHOICES, 
+        default='MOVING_AVERAGE'
+    )
+```
+
+### 18.3 — Historical Correction Protocol
+
+**Problem:** Corrections to historical data (stock reconciliation, price adjustment) can create permanent valuation drift if future entries aren't recalculated.
+
+**ERPNext Pattern:** `Repost Item Valuation` doctype with background job processing for historical corrections.
+
+**AgriCRM Rule:** Any correction to historical data must trigger automatic repost of all affected future entries via background job processing.
+
+```python
+# Required after any historical correction
+def trigger_repost_valuation(product_id, from_date):
+    """Queue background job to recalculate all future valuations."""
+    RepostItemValuation.objects.create(
+        product_id=product_id,
+        from_date=from_date,
+        status='QUEUED'
+    )
+```
+
+### 18.4 — Payment Allocation Atomicity
+
+**Problem:** Single-payment-per-invoice limitation prevents efficient cash management.
+
+**ERPNext Pattern:** `Payment Entry` with allocation table distributing amount across multiple invoices.
+
+**AgriCRM Rule:** When implementing multi-invoice payment allocation, ensure the total allocated amount never exceeds the payment amount, and all allocations are atomic within a single transaction.
+
+```python
+# Required validation in payment allocation
+total_allocated = sum(allocation.amount for allocation in allocations)
+if total_allocated > payment.amount:
+    raise ValidationError("Total allocation cannot exceed payment amount.")
+```
+
+### 18.5 — Landed Cost Distribution
+
+**Problem:** Additional costs (freight, customs, handling) not distributed to item valuation understates inventory value.
+
+**ERPNext Pattern:** `Landed Cost Voucher` distributes additional costs proportionally across purchase items.
+
+**AgriCRM Rule:** Additional costs must be distributed proportionally across all items in a purchase receipt and added to their valuation rates.
+
+```python
+# Required for proper inventory valuation
+def distribute_landed_costs(purchase_receipt, additional_costs):
+    """Distribute additional costs proportionally across all items."""
+    total_value = sum(item.amount for item in purchase_receipt.items.all())
+    for item in purchase_receipt.items.all():
+        proportion = item.amount / total_value
+        additional_cost = additional_costs * proportion
+        item.batch.purchase_price += additional_cost / item.quantity
+        item.batch.save()
+```
+
+### 18.6 — Immutable Ledger Compliance
+
+**Problem:** Deleting GL entries on cancellation violates accounting audit requirements.
+
+**ERPNext Pattern:** Cancellation creates reversing GL entries (mirror entries with swapped debit/credit) instead of deletion.
+
+**AgriCRM Rule:** Never delete GL entries. Always create reversing entries to maintain complete audit trail.
+
+```python
+# ✗ WRONG — deletes audit trail
+GLEntry.objects.filter(reference_type='Invoice', reference_id=invoice.id).delete()
+
+# ✓ CORRECT — preserves audit trail
+reverse_document_gl('Invoice', invoice.id)  # Creates mirror entries
+```
+
+### 18.7 — Concurrent Valuation Safety
+
+**Problem:** Multiple simultaneous stock movements can corrupt moving average calculations.
+
+**ERPNext Pattern:** Product-level locking during valuation recalculation.
+
+**AgriCRM Rule:** Always use `select_for_update()` on the product when recalculating moving averages to prevent race conditions.
+
+```python
+# ✓ REQUIRED — prevents concurrent MA corruption
+product_locked = Product.objects.select_for_update().get(pk=product.pk)
+new_avg = _recalculate_moving_average(product_locked, quantity, price)
+```
+
 **Implementation checklist:**
 1. View fetches `GLEntry` rows filtered by `reference_type` + `reference_id` for the document:
    ```python
@@ -1035,8 +1167,175 @@ _CANCEL_TO_BASE = {
 
 ---
 
+## 17. Ledger Transparency Standards
+
+**[IMPLEMENTED 2026-03-11 — General Ledger UI Refactor Sprint 19.1]**
+
+### 17.1 — The Problem: Raw Entry Tables Are Unreadable
+
+A flat list of GL rows (one row per debit/credit line) provides zero context. An operator looking at the ledger cannot tell which rows belong to the same business event without cross-referencing Voucher Type + Ref ID manually. Tax lines (CGST, SGST) are visually indistinguishable from revenue or inventory lines. Broken double-entry vouchers are invisible.
+
+### 17.2 — Voucher-First Display (Group Header Pattern)
+
+**Every GL view must group entries by (reference_type, reference_id) — one visual "card" per business document.**
+
+Group header must show:
+- Colour-coded badge: voucher type (blue=sales, amber=purchase, rose=returns, emerald=customer payments, orange=supplier payments, violet=inventory, gray=cancels)
+- Reference ID (`#7`) — uniquely identifies the source document
+- Date and time of posting
+- Line count (N lines)
+- Group-level Dr total and Cr total
+- Balanced indicator (green ✓ or red ✗) — immediate visual signal of double-entry integrity
+- "View document →" deep link via `resolve_source_document` router
+
+Entry rows within each group show:
+- Account name + type label
+- Debit or Credit amount (dash for zero)
+- Running balance (cumulative across all filtered entries, computed before grouping)
+- Remarks
+
+### 17.3 — Contextual Account Tooltips (Pattern 4 applied to accounting)
+
+Every account name in the GL must carry a `(?)` hover tooltip explaining its purpose in plain English — not accounting jargon.
+
+**Implementation:** `window.ACCOUNT_TOOLTIPS` JS dictionary in the template, keyed by exact account name. Alpine.js `x-data` binds the lookup at hover time:
+
+```html
+<span x-data="{ showTip: false, tip: (window.ACCOUNT_TOOLTIPS || {})['{{ entry.account.name|escapejs }}'] || '' }"
+      class="relative inline-flex items-center gap-1.5">
+  <span class="text-sm font-bold text-gray-900">{{ entry.account.name }}</span>
+  <button type="button" x-show="tip" @mouseenter="showTip = true" @mouseleave="showTip = false"
+          class="w-4 h-4 rounded-full bg-gray-100 text-gray-400 text-[9px] font-bold flex items-center justify-center cursor-help hover:bg-blue-100 hover:text-blue-600 transition-colors">?</button>
+  <div x-show="showTip" x-transition
+       class="absolute left-0 bottom-full mb-2 z-50 w-60 p-3 bg-gray-900 text-white text-[11px] font-medium rounded-xl shadow-2xl pointer-events-none leading-relaxed"
+       x-text="tip"></div>
+</span>
+```
+
+The `(?)` button only renders when a tooltip exists (`x-show="tip"`). Accounts without a tooltip entry remain clean.
+
+### 17.4 — Pagination by Voucher Groups (not individual lines)
+
+Paginate at the **voucher group** level (default: 20 groups per page), not at the entry line level. This ensures a business document is never split across pages. Running balance is computed on ALL filtered entries before grouping and paginating — so the balance shown in the last row of each page is always correct in absolute terms.
+
+### 17.5 — Python Grouping (not Django template `{% regroup %}`)
+
+Use `itertools.groupby` in the view, not `{% regroup %}` in the template. Reasons:
+1. `{% regroup %}` cannot compute per-group aggregates (Dr/Cr totals, balanced flag)
+2. Grouping in Python is testable in isolation
+3. Template stays declarative — iterates over pre-computed group dicts
+
+```python
+from itertools import groupby as _groupby
+
+def _group_entries(entries_with_balance):
+    groups = []
+    for (ref_type, ref_id), group_iter in _groupby(
+        entries_with_balance,
+        key=lambda e: (e.reference_type, e.reference_id),
+    ):
+        entries = list(group_iter)
+        total_dr = sum((e.debit  or Decimal('0.00') for e in entries), Decimal('0.00'))
+        total_cr = sum((e.credit or Decimal('0.00') for e in entries), Decimal('0.00'))
+        groups.append({ ... })  # see accounting/views.py for full dict
+    return groups
+```
+
+**Prerequisite:** Input entries must already be sorted by `(created_at, pk)` ascending — guaranteed by `_build_gl_queryset()`.
+
+### 17.6 — Voucher Badge Colour Map
+
+| Document Type | Badge Colour |
+|---|---|
+| SalesInvoice, DeliveryNote | `bg-blue-50 text-blue-700` |
+| PurchaseInvoice, PurchaseReceipt | `bg-amber-50 text-amber-700` |
+| CustomerPayment | `bg-emerald-50 text-emerald-700` |
+| SupplierPayment | `bg-orange-50 text-orange-700` |
+| SalesReturn, PurchaseReturn | `bg-rose-50 text-rose-700` |
+| StockReconciliation | `bg-violet-50 text-violet-700` |
+| Any Cancel variant | `bg-gray-100 text-gray-500` |
+| Unknown | `bg-gray-100 text-gray-600` |
+
+---
+
+## 18. Transaction Threading Standards
+
+**[IMPLEMENTED 2026-03-11 — General Ledger UI Sprint 19.2]**
+
+### 18.1 — The Problem: Disconnected Physical and Financial Events
+
+In double-entry accounting, a single purchase cycle produces two GL vouchers:
+1. **Purchase Receipt #7** (physical event): `Stock In Hand Dr / SRNB Cr`
+2. **Purchase Invoice #24** (financial event): `SRNB Dr + CGST Dr + SGST Dr / Accounts Payable Cr`
+
+Displaying these as separate, unrelated rows forces operators to mentally reconstruct the business transaction. These vouchers must be visually threaded into a single "Master Transaction Card".
+
+### 18.2 — Threading Key: FK-Based, Never Remark-Based
+
+**Always thread using domain model FKs. Never parse remarks text.**
+
+Supported threads (as of Sprint 19.2):
+
+| Financial Doc | Physical Doc | FK Field |
+|---|---|---|
+| `PurchaseInvoice` | `PurchaseReceipt` | `PurchaseInvoice.purchase_receipt` (nullable FK) |
+| `SalesInvoice` | `DeliveryNote` | `SalesInvoice.delivery_note` (nullable FK) |
+
+### 18.3 — Two-Pass Grouping Algorithm
+
+Threading uses a **two-pass algorithm** to avoid ordering bugs. Voucher groups arrive in chronological order — Receipt (#7) always precedes Invoice (#24). A single-pass approach would emit Receipt as standalone before discovering Invoice wants to absorb it.
+
+**Pass 1 (pre-computation):** Query `PurchaseInvoice` and `SalesInvoice` for all invoice IDs in `voucher_groups`. Build `absorbed_keys: set` containing `(ref_type, ref_id)` of every child document (receipts, delivery notes) that a parent invoice claims.
+
+**Pass 2 (emit):** Iterate `voucher_groups` chronologically. Skip any group whose key is in `absorbed_keys`. For parent invoices, bundle `[child_group, parent_group]` into one audit-group dict. Physical doc always appears first.
+
+### 18.4 — Audit Group Dict Structure
+
+```python
+{
+    'master_type':    'PurchaseInvoice',      # for resolve_source_document
+    'master_id':      24,
+    'label':          'PINV-001',             # invoice_number or display fallback
+    'party':          'Indofil Industries',   # supplier.name / customer.name
+    'amount':         Decimal('14915.20'),    # total_amount or grand_total
+    'date':           datetime,
+    'badge_class':    'bg-amber-50 text-amber-700',
+    'display_name':   'Purchase Invoice',
+    'is_threaded':    True,
+    'voucher_groups': [receipt_group, invoice_group],  # physical doc first
+    'total_entries':  6,
+    'doc_count':      2,
+}
+```
+
+### 18.5 — UI Layout: Master Transaction Card
+
+**Collapsed (default):** One row showing: badge·label · party · amount · date · doc/line count pill · chevron · "View →" (leads to financial/master document).
+
+**Expanded (toggle):** One `<table>` spanning all sub-groups. Sub-group section header rows (colspan=5) carry: sub-badge | #id | date | Dr/Cr totals | ✓ balanced | **"View [sub-doc] →" deep link**. Entry rows have Alpine.js (?) tooltips. Each sub-group ends with a "Bal. after [sub-doc]" callout row.
+
+### 18.6 — Deep Link Routing (Rule 16 Compliance)
+
+- Card "View →" → financial/master document via `resolve_source_document`
+- Sub-section "View Receipt →" / "View Delivery Note →" → that specific child document via `resolve_source_document`
+- Both always use the Resolution Router. Never hardcode document URLs in GL templates.
+
+### 18.7 — Pagination and Running Balance
+
+Paginate at audit group (transaction card) level. Running balance is computed on ALL filtered entries before any grouping or threading — values are always absolute and page-independent.
+
+### 18.8 — Summary Card Nomenclature
+
+| Label | Value |
+|---|---|
+| Transactions | `len(all_audit_groups)` — master transaction cards |
+| Docs (sub-label) | `len(all_groups)` — underlying voucher groups |
+| Lines (sub-label) | `qs.count()` — individual GLEntry rows |
+
+---
+
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
 - **Audit Script** — `C:\agri_crm\audit_gl_reconciliation.py` (read-only; run after every sprint)
-- **Last Updated** — 2026-03-09 (Sprint 19: GL UI — Rule 16 Centralized Navigation Routing)
+- **Last Updated** — 2026-03-11 (Sprint 19.2: GL UI — Rule 18 Transaction Threading Standards)

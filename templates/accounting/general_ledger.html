@@ -14,28 +14,19 @@
                 <span class="text-gray-700">General Ledger</span>
             </div>
             <h1 class="text-4xl font-bold text-gray-900 tracking-tight">General Ledger</h1>
-            <p class="text-gray-400 mt-1 font-medium">
-                Every GL posting in the system — filterable by account, date, and voucher type.
-            </p>
+            <p class="text-gray-400 mt-1 font-medium">Every GL posting grouped by business transaction — filterable by account, date, and voucher type.</p>
         </div>
-        {% if active_filters %}
-        <a href="{% url 'general_ledger' %}" class="mt-1 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all shrink-0">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-            Clear filters
-        </a>
-        {% endif %}
+        {% if active_filters %}<a href="{% url 'general_ledger' %}" class="mt-1 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all shrink-0"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>Clear filters</a>{% endif %}
     </header>
 
     {# ── Pattern 6: Summary Cards ────────────────────────────────────────── #}
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 
-        {# Total Entries #}
+        {# Transactions (audit groups) #}
         <div class="bg-white rounded-2xl border border-gray-100 p-5">
-            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Entries</div>
-            <div class="text-3xl font-bold text-gray-900">{{ total_entries }}</div>
-            <div class="text-[10px] text-gray-400 font-medium mt-1">
-                {% if active_filters %}filtered{% else %}all time{% endif %}
-            </div>
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Transactions</div>
+            <div class="text-3xl font-bold text-gray-900">{{ total_transactions }}</div>
+            <div class="text-[10px] text-gray-400 font-medium mt-1">{{ total_vouchers }} docs · {{ total_entries }} lines · {% if active_filters %}filtered{% else %}all time{% endif %}</div>
         </div>
 
         {# Total Debits #}
@@ -55,16 +46,8 @@
         {# Net Balance #}
         <div class="bg-white rounded-2xl border border-gray-100 p-5">
             <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Net Balance (Dr&minus;Cr)</div>
-            {% if net_balance > 0 %}
-            <div class="text-3xl font-bold text-emerald-700">{{ net_balance|floatformat:2|intcomma }}</div>
-            {% elif net_balance < 0 %}
-            <div class="text-3xl font-bold text-red-600">{{ net_balance|floatformat:2|intcomma }}</div>
-            {% else %}
-            <div class="text-3xl font-bold text-gray-400">0.00</div>
-            {% endif %}
-            <div class="text-[10px] font-medium mt-1 {% if net_balance == 0 %}text-emerald-500{% else %}text-orange-500{% endif %}">
-                {% if net_balance == 0 %}balanced{% else %}net exposure{% endif %}
-            </div>
+            {% if net_balance > 0 %}<div class="text-3xl font-bold text-emerald-700">{{ net_balance|floatformat:2|intcomma }}</div>{% elif net_balance < 0 %}<div class="text-3xl font-bold text-red-600">{{ net_balance|floatformat:2|intcomma }}</div>{% else %}<div class="text-3xl font-bold text-gray-400">0.00</div>{% endif %}
+            <div class="text-[10px] font-medium mt-1 {% if net_balance == 0 %}text-emerald-500{% else %}text-orange-500{% endif %}">{% if net_balance == 0 %}balanced{% else %}net exposure{% endif %}</div>
         </div>
 
     </div>
@@ -73,62 +56,43 @@
     <form method="get" action="{% url 'general_ledger' %}" class="bg-white rounded-2xl border border-gray-100 p-5">
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
 
-            {# Date From #}
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">From</label>
                 <input type="date" name="date_from" value="{{ f_date_from }}" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50">
             </div>
-
-            {# Date To #}
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">To</label>
                 <input type="date" name="date_to" value="{{ f_date_to }}" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50">
             </div>
-
-            {# Account #}
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Account</label>
                 <select name="account_id" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 appearance-none cursor-pointer">
                     <option value="">All accounts</option>
-                    {% for account in accounts %}
-                    <option value="{{ account.id }}" {% if f_account_id == account.id|stringformat:"s" %}selected{% endif %}>{{ account.name }}</option>
-                    {% endfor %}
+                    {% for account in accounts %}<option value="{{ account.id }}" {% if f_account_id == account.id|stringformat:"s" %}selected{% endif %}>{{ account.name }}</option>{% endfor %}
                 </select>
             </div>
-
-            {# Voucher Type #}
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Voucher Type</label>
                 <select name="voucher_type" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 appearance-none cursor-pointer">
                     <option value="">All types</option>
-                    {% for vt in voucher_types %}
-                    <option value="{{ vt }}" {% if f_voucher_type == vt %}selected{% endif %}>{{ vt }}</option>
-                    {% endfor %}
+                    {% for vt in voucher_types %}<option value="{{ vt }}" {% if f_voucher_type == vt %}selected{% endif %}>{{ vt }}</option>{% endfor %}
                 </select>
             </div>
-
-            {# Ref ID #}
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Ref #</label>
                 <input type="number" name="ref_id" value="{{ f_ref_id }}" placeholder="e.g. 12" min="1" class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 placeholder-gray-300">
             </div>
-
-            {# Search + Submit #}
             <div class="flex gap-2">
                 <div class="flex-1">
                     <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Search</label>
                     <input type="text" name="q" value="{{ f_q }}" placeholder="remarks, account..." class="w-full border-2 border-gray-100 focus:border-blue-400/50 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-800 outline-none transition-all bg-gray-50/50 placeholder-gray-300">
                 </div>
                 <div class="flex items-end">
-                    <button type="submit" class="px-4 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-700 transition-colors shrink-0">
-                        Filter
-                    </button>
+                    <button type="submit" class="px-4 py-2.5 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-700 transition-colors shrink-0">Filter</button>
                 </div>
             </div>
 
         </div>
-
-        {# Active filter chips #}
         {% if active_filters %}
         <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-50">
             <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest self-center">Active:</span>
@@ -142,95 +106,157 @@
         {% endif %}
     </form>
 
-    {# ── GL Table ────────────────────────────────────────────────────────── #}
+    {# ── Master Transaction Cards ─────────────────────────────────────────── #}
     <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden">
 
-        {# Table header #}
+        {# Section header #}
         <div class="px-6 py-3.5 border-b border-gray-50 flex items-center justify-between">
             <div class="flex items-center gap-2">
                 <div class="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center">
                     <svg class="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                 </div>
-                <span class="text-xs font-bold text-gray-500 uppercase tracking-widest">Ledger Entries</span>
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-widest">Transactions</span>
                 <span class="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[10px] font-bold">{{ page_obj.paginator.count }}</span>
             </div>
-            {% if not single_account %}
-            <span class="text-[10px] text-gray-400 font-medium">Running balance reflects all filtered accounts combined</span>
-            {% else %}
-            <span class="text-[10px] text-emerald-600 font-bold">Account balance view</span>
-            {% endif %}
+            {% if not single_account %}<span class="text-[10px] text-gray-400 font-medium">Running balance reflects all filtered accounts combined</span>{% else %}<span class="text-[10px] text-emerald-600 font-bold">Account balance view</span>{% endif %}
         </div>
 
         {% if page_obj %}
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="border-b border-gray-50">
-                        <th class="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Date</th>
-                        <th class="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Voucher Type</th>
-                        <th class="px-4 py-3 text-center text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ref #</th>
-                        <th class="px-4 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Account</th>
-                        <th class="px-4 py-3 text-right text-[10px] font-bold text-emerald-500 uppercase tracking-widest whitespace-nowrap">Debit (Dr)</th>
-                        <th class="px-4 py-3 text-right text-[10px] font-bold text-red-500 uppercase tracking-widest whitespace-nowrap">Credit (Cr)</th>
-                        <th class="px-4 py-3 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Running Bal.</th>
-                        <th class="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Remarks</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-50">
-                    {% for entry in page_obj %}
-                    <tr class="hover:bg-gray-50/70 transition-colors group">
+        <div class="divide-y divide-gray-50">
 
-                        {# Date #}
-                        <td class="px-5 py-3.5 text-xs text-gray-500 font-medium whitespace-nowrap">{{ entry.created_at|date:"d M Y" }}<br><span class="text-[10px] text-gray-300">{{ entry.created_at|time:"H:i" }}</span></td>
+            {% for tx in page_obj %}
 
-                        {# Voucher Type — links to GL filtered by this voucher type #}
-                        <td class="px-4 py-3.5 whitespace-nowrap">
-                            <a href="{% url 'general_ledger' %}?voucher_type={{ entry.reference_type }}" class="text-xs font-bold text-gray-700 hover:text-blue-600 transition-colors">{{ entry.reference_type }}</a>
-                        </td>
+            {# ═══════════════════════════════════════════════════════════════ #}
+            {# Master Transaction Card                                         #}
+            {# ═══════════════════════════════════════════════════════════════ #}
+            <div x-data="{ open: false }">
 
-                        {# Ref # — jump-to-source link #}
-                        <td class="px-4 py-3.5 text-center">
-                            <a href="{% url 'resolve_source_document' entry.reference_type entry.reference_id %}" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gray-50 group-hover:bg-blue-50 text-xs font-bold text-gray-500 group-hover:text-blue-600 transition-colors border border-gray-100 group-hover:border-blue-200">{{ entry.reference_id }}</a>
-                        </td>
+                {# ── Card Header (always visible) ────────────────────────── #}
+                <div @click="open = !open" class="px-5 py-3.5 flex items-center gap-3 cursor-pointer hover:bg-gray-50/60 transition-colors select-none">
 
-                        {# Account #}
-                        <td class="px-4 py-3.5">
-                            <span class="text-sm font-bold text-gray-900">{{ entry.account.name }}</span>
-                            <span class="ml-1.5 text-[9px] font-bold text-gray-300 uppercase tracking-widest">{{ entry.account.get_account_type_display }}</span>
-                        </td>
+                    {# Voucher type badge #}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-bold {{ tx.badge_class }} shrink-0">{{ tx.label }}</span>
 
-                        {# Debit #}
-                        <td class="px-4 py-3.5 text-right">{% if entry.debit > 0 %}<span class="text-sm font-bold text-emerald-700">{{ entry.debit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+                    {# Party name (supplier / customer) — only for invoiced transactions #}
+                    {% if tx.party %}<span class="text-sm font-semibold text-gray-800 truncate min-w-0">{{ tx.party }}</span>{% endif %}
 
-                        {# Credit #}
-                        <td class="px-4 py-3.5 text-right">{% if entry.credit > 0 %}<span class="text-sm font-bold text-red-500">{{ entry.credit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+                    {# Amount — right edge of flex grow area #}
+                    <span class="text-sm font-bold text-gray-700 ml-auto shrink-0">₹{{ tx.amount|floatformat:2|intcomma }}</span>
 
-                        {# Running Balance #}
-                        <td class="px-4 py-3.5 text-right whitespace-nowrap">{% if entry.running_balance > 0 %}<span class="text-sm font-semibold text-emerald-700">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% elif entry.running_balance < 0 %}<span class="text-sm font-semibold text-red-500">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-300 text-sm">0.00</span>{% endif %}</td>
+                    {# Date #}
+                    <span class="text-xs text-gray-400 font-medium whitespace-nowrap shrink-0">{{ tx.date|date:"d M Y" }}</span>
 
-                        {# Remarks #}
-                        <td class="px-5 py-3.5 text-xs text-gray-400 font-medium max-w-[200px] truncate" title="{{ entry.remarks }}">{{ entry.remarks|default:"—"|truncatechars:48 }}</td>
+                    {# Thread/line count pill #}
+                    {% if tx.is_threaded %}<span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded-md whitespace-nowrap shrink-0">{{ tx.doc_count }} docs · {{ tx.total_entries }} lines</span>{% else %}<span class="text-[10px] text-gray-400 whitespace-nowrap shrink-0">{{ tx.total_entries }} line{{ tx.total_entries|pluralize }}</span>{% endif %}
 
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                    {# Chevron toggle #}
+                    <svg :class="open ? 'rotate-180' : ''" class="w-4 h-4 text-gray-300 transition-transform shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+
+                    {# View master document link — .stop prevents card toggle #}
+                    <a href="{% url 'resolve_source_document' tx.master_type tx.master_id %}" @click.stop class="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 transition-colors shrink-0">View <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg></a>
+
+                </div>
+
+                {# ── Expandable Ledger Breakdown ─────────────────────────── #}
+                <div x-show="open" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 -translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="border-t border-gray-100">
+                    <table class="w-full text-sm">
+
+                        {# Column headers — once per breakdown #}
+                        <thead>
+                            <tr class="bg-gray-50/60 border-b border-gray-100">
+                                <th class="px-6 py-2.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Account</th>
+                                <th class="px-4 py-2.5 text-right text-[10px] font-bold text-emerald-500 uppercase tracking-widest whitespace-nowrap">Debit (Dr)</th>
+                                <th class="px-4 py-2.5 text-right text-[10px] font-bold text-red-500 uppercase tracking-widest whitespace-nowrap">Credit (Cr)</th>
+                                <th class="px-4 py-2.5 text-right text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Running Bal.</th>
+                                <th class="px-5 py-2.5 text-left text-[10px] font-bold text-gray-400 uppercase tracking-widest">Remarks</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            {% for group in tx.voucher_groups %}
+
+                            {# ── Sub-document section header ─────────────── #}
+                            <tr>
+                                <td colspan="5" class="px-5 py-2 {% if tx.is_threaded %}bg-gray-50/80{% else %}bg-transparent{% endif %} border-t border-gray-100">
+                                    <div class="flex items-center gap-3 flex-wrap">
+
+                                        {# Sub-doc type badge (smaller than master) #}
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold {{ group.badge_class }}">{{ group.display_name }}</span>
+
+                                        {# Ref ID #}
+                                        <span class="text-xs font-bold text-gray-600">#{{ group.reference_id }}</span>
+
+                                        {# Timestamp #}
+                                        <span class="text-[10px] text-gray-400 font-medium">{{ group.date|date:"d M Y" }} · {{ group.date|time:"H:i" }}</span>
+
+                                        {# Dr / Cr totals #}
+                                        <span class="text-[10px] font-bold text-emerald-600">Dr {{ group.total_debit|floatformat:2|intcomma }}</span>
+                                        <span class="text-[10px] font-bold text-red-500">Cr {{ group.total_credit|floatformat:2|intcomma }}</span>
+
+                                        {# Balanced indicator #}
+                                        {% if group.balanced %}<span class="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-600"><svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>Balanced</span>{% else %}<span class="inline-flex items-center gap-0.5 text-[10px] font-bold text-red-500"><svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>Unbalanced</span>{% endif %}
+
+                                        {# Deep link — links to THIS specific sub-document (Receipt #7 or Invoice #24) #}
+                                        <a href="{% url 'resolve_source_document' group.reference_type group.reference_id %}" class="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 transition-colors shrink-0">View {{ group.display_name }} <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg></a>
+
+                                    </div>
+                                </td>
+                            </tr>
+
+                            {# ── GL Entry rows for this sub-document ─────── #}
+                            {% for entry in group.entries %}
+                            <tr class="hover:bg-gray-50/50 transition-colors border-b border-gray-50/80">
+
+                                {# Account + Alpine.js contextual tooltip #}
+                                <td class="px-6 py-2.5">
+                                    <span x-data="{ showTip: false, tip: (window.ACCOUNT_TOOLTIPS || {})['{{ entry.account.name|escapejs }}'] || '' }" class="relative inline-flex items-center gap-1.5">
+                                        <span class="text-sm font-bold text-gray-900">{{ entry.account.name }}</span>
+                                        <span class="text-[9px] font-bold text-gray-300 uppercase tracking-widest">{{ entry.account.get_account_type_display }}</span>
+                                        <button type="button" x-show="tip" @mouseenter="showTip = true" @mouseleave="showTip = false" class="w-4 h-4 rounded-full bg-gray-100 text-gray-400 text-[9px] font-bold flex items-center justify-center cursor-help shrink-0 hover:bg-blue-100 hover:text-blue-600 transition-colors leading-none">?</button>
+                                        <div x-show="showTip" x-transition class="absolute left-0 bottom-full mb-2 z-50 w-60 p-3 bg-gray-900 text-white text-[11px] font-medium rounded-xl shadow-2xl pointer-events-none leading-relaxed" x-text="tip"></div>
+                                    </span>
+                                </td>
+
+                                {# Debit #}
+                                <td class="px-4 py-2.5 text-right">{% if entry.debit %}<span class="text-sm font-bold text-emerald-700">{{ entry.debit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+
+                                {# Credit #}
+                                <td class="px-4 py-2.5 text-right">{% if entry.credit %}<span class="text-sm font-bold text-red-500">{{ entry.credit|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-200 text-sm">—</span>{% endif %}</td>
+
+                                {# Running Balance #}
+                                <td class="px-4 py-2.5 text-right whitespace-nowrap">{% if entry.running_balance > 0 %}<span class="text-sm font-semibold text-emerald-700">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% elif entry.running_balance < 0 %}<span class="text-sm font-semibold text-red-500">{{ entry.running_balance|floatformat:2|intcomma }}</span>{% else %}<span class="text-gray-300 text-sm">0.00</span>{% endif %}</td>
+
+                                {# Remarks #}
+                                <td class="px-5 py-2.5 text-xs text-gray-400 font-medium max-w-[220px] truncate" title="{{ entry.remarks }}">{{ entry.remarks|default:"—"|truncatechars:52 }}</td>
+
+                            </tr>
+                            {% endfor %}
+
+                            {# ── Running balance after this sub-document ─── #}
+                            <tr class="bg-gray-50/30 border-b border-gray-100">
+                                <td colspan="3" class="px-6 py-1.5"></td>
+                                <td class="px-4 py-1.5 text-right"><span class="text-[9px] font-bold text-gray-300 uppercase tracking-widest">Bal. after {{ group.display_name }}</span></td>
+                                <td class="px-5 py-1.5">{% if group.end_running_balance > 0 %}<span class="text-[11px] font-bold text-emerald-700">{{ group.end_running_balance|floatformat:2|intcomma }}</span>{% elif group.end_running_balance < 0 %}<span class="text-[11px] font-bold text-red-500">{{ group.end_running_balance|floatformat:2|intcomma }}</span>{% else %}<span class="text-[11px] font-bold text-gray-400">0.00</span>{% endif %}</td>
+                            </tr>
+
+                            {% endfor %}{# end group #}
+                        </tbody>
+                    </table>
+                </div>{# end x-show breakdown #}
+
+            </div>{# end x-data card #}
+            {% endfor %}{# end tx #}
+
+        </div>{# end divide-y #}
 
         {# ── Pagination ──────────────────────────────────────────────────── #}
         {% if page_obj.has_other_pages %}
         <div class="px-6 py-4 border-t border-gray-50 flex items-center justify-between">
-            <div class="text-xs text-gray-400 font-medium">
-                Showing {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }} entries
-            </div>
+            <div class="text-xs text-gray-400 font-medium">Showing transactions {{ page_obj.start_index }}–{{ page_obj.end_index }} of {{ page_obj.paginator.count }}</div>
             <div class="flex items-center gap-2">
-                {% if page_obj.has_previous %}
-                <a href="?{{ pagination_prefix }}page={{ page_obj.previous_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">&larr; Prev</a>
-                {% endif %}
+                {% if page_obj.has_previous %}<a href="?{{ pagination_prefix }}page={{ page_obj.previous_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">&larr; Prev</a>{% endif %}
                 <span class="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-bold">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
-                {% if page_obj.has_next %}
-                <a href="?{{ pagination_prefix }}page={{ page_obj.next_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">Next &rarr;</a>
-                {% endif %}
+                {% if page_obj.has_next %}<a href="?{{ pagination_prefix }}page={{ page_obj.next_page_number }}" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-700 transition-all">Next &rarr;</a>{% endif %}
             </div>
         </div>
         {% endif %}
@@ -246,7 +272,7 @@
         </div>
         {% endif %}
 
-    </div>
+    </div>{# end outer card #}
 
     {# ── Validate Ledger ─────────────────────────────────────────────────── #}
     <div class="bg-white rounded-2xl border border-gray-100 p-6">
@@ -261,11 +287,36 @@
                 <svg id="validate-spinner" class="w-4 h-4 animate-spin htmx-indicator hidden" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             </button>
         </div>
-        <div id="validate-results" class="text-xs text-gray-400 font-medium">
-            Click "Validate Ledger" to run integrity checks.
-        </div>
+        <div id="validate-results" class="text-xs text-gray-400 font-medium">Click "Validate Ledger" to run integrity checks.</div>
     </div>
 
 </div>
 </div>
+
+{# ── Account Tooltip Dictionary ────────────────────────────────────────────── #}
+<script>
+window.ACCOUNT_TOOLTIPS = {
+  "Stock In Hand": "Your inventory valued at Moving Average Price (MAP). Increases when goods are received, decreases when sold or returned.",
+  "Stock Received Not Billed": "Clearing account: goods have arrived but the supplier's invoice hasn't been submitted yet. Clears automatically when the Purchase Invoice is booked.",
+  "Stock Delivered Not Billed": "Clearing account: goods have shipped to the customer but the Sales Invoice hasn't been issued yet. Clears when the Sales Invoice is booked.",
+  "Cost of Goods Sold": "The MAP cost of inventory that has been sold. Increases every time a Delivery Note is submitted.",
+  "Accounts Payable": "Money your business owes to suppliers. Increases when a Purchase Invoice is submitted, decreases when you pay the supplier.",
+  "Accounts Receivable": "Money customers owe your business. Increases when a Sales Invoice is issued, decreases when the customer pays.",
+  "CGST Payable": "Central GST your business owes to the government on purchases (input tax). Offset against CGST Receivable.",
+  "CGST Receivable": "Central GST collected from customers on sales (output tax). Offset against CGST Payable at filing.",
+  "SGST Payable": "State GST your business owes to the government on purchases (input tax). Offset against SGST Receivable.",
+  "SGST Receivable": "State GST collected from customers on sales (output tax). Offset against SGST Payable at filing.",
+  "IGST Payable": "Integrated GST (inter-state) your business owes on purchases. Offset against IGST Receivable.",
+  "IGST Receivable": "Integrated GST (inter-state) collected from customers on sales. Offset against IGST Payable at filing.",
+  "Sales Revenue": "Income earned from selling goods. Increases when a Sales Invoice is submitted.",
+  "Purchase Account": "The total value of goods purchased from suppliers at cost. Increases when a Purchase Invoice is submitted.",
+  "Bank Account": "Your business bank account balance in the system. Increases when you pay or receive money.",
+  "Cash": "Physical cash held by the business. Increases on receipt, decreases on payment.",
+  "Inventory Adjustment": "Records stock gains or losses from physical reconciliations (discrepancies between actual and system counts).",
+  "Sales Return": "Tracks the value of goods returned by customers. Increases on a Sales Return, decreases your revenue.",
+  "Purchase Return": "Tracks the value of goods returned to suppliers. Reduces your purchase cost.",
+  "Discount Given": "Discounts offered to customers. Reduces net revenue.",
+  "Discount Received": "Discounts received from suppliers. Reduces net purchase cost."
+};
+</script>
 {% endblock %}
