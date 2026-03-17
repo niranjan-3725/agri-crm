@@ -1684,11 +1684,18 @@ def create_sales_return(request):
     # GET — handle ?from_invoice= pre-population (Phase 2.2 verified state)
     from_invoice_pk = request.GET.get('from_invoice')
     from_invoice = None
+    from_invoice_json = 'null'
     if from_invoice_pk:
         from_invoice = get_object_or_404(SalesInvoice, pk=from_invoice_pk)
+        from_invoice_json = json.dumps({
+            'customer_id': from_invoice.customer.pk,
+            'customer_display': f"{from_invoice.customer.name} ({from_invoice.customer.city or ''})",
+            'invoice_id': from_invoice.pk,
+        })
 
     return render(request, 'transactions/sales_return_form.html', {
         'from_invoice': from_invoice,
+        'from_invoice_json': from_invoice_json,
     })
 
 def sales_return_detail(request, pk):
@@ -1832,11 +1839,18 @@ def create_purchase_return(request):
     # GET — handle ?from_invoice= pre-population (Phase 2.2 verified state)
     from_invoice_pk = request.GET.get('from_invoice')
     from_invoice = None
+    from_invoice_json = 'null'
     if from_invoice_pk:
         from_invoice = get_object_or_404(PurchaseInvoice, pk=from_invoice_pk)
+        from_invoice_json = json.dumps({
+            'supplier_id': from_invoice.supplier.pk,
+            'supplier_display': f"{from_invoice.supplier.name} ({from_invoice.supplier.phone or ''})",
+            'invoice_id': from_invoice.pk,
+        })
 
     return render(request, 'transactions/purchase_return_form.html', {
         'from_invoice': from_invoice,
+        'from_invoice_json': from_invoice_json,
     })
 
 def purchase_return_detail(request, pk):

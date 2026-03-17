@@ -266,7 +266,17 @@ class PurchaseReceipt(models.Model):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
+        # FP1: Block cancel if a linked invoice is already submitted
+        if self.invoices.filter(status='SUBMITTED').exists():
+            raise ValidationError(
+                "Cannot cancel receipt: a linked Purchase Invoice is already submitted. "
+                "Cancel the invoice first."
+            )
+
         with transaction.atomic():
+            # FP1: Cascade-delete Ghost DRAFT invoices (no GL impact; CASCADE removes PurchaseItems)
+            self.invoices.filter(status='DRAFT').delete()
+
             for item in self.items.all():
                 process_stock_movement(
                     batch_id=item.batch.id,
@@ -479,22 +489,22 @@ class PurchaseInvoice(models.Model):
             raise ValidationError("Only draft documents can be submitted.")
 
         with transaction.atomic():
-            # Sprint 13: Auto-create fulfillment if not already linked
+            # Rule 22 (Material-First): receipt must exist and be submitted before invoice
             if not self.purchase_receipt:
-                pr = PurchaseReceipt.objects.create(
-                    supplier=self.supplier,
-                    date=self.date if not isinstance(self.date, str) else self.date,
-                    purchase_order=self.purchase_order,
+                raise ValidationError(
+                    "A Purchase Invoice must be linked to a submitted Purchase Receipt "
+                    "before it can be submitted."
                 )
-                for item in self.items.all():
-                    PurchaseReceiptItem.objects.create(
-                        receipt=pr,
-                        batch=item.batch,
-                        quantity=item.quantity,
-                        purchase_order_item=item.purchase_order_item,
-                    )
-                pr.submit()
-                self.purchase_receipt = pr
+            if self.purchase_receipt.status != 'SUBMITTED':
+                raise ValidationError(
+                    f"Linked Purchase Receipt #{self.purchase_receipt_id} is not yet submitted."
+                )
+            # Prevent submitting an unfinalized ghost invoice
+            if self.invoice_number.startswith('DRAFT-PR-'):
+                raise ValidationError(
+                    "Replace the draft invoice number with the supplier's actual invoice "
+                    "number before submitting."
+                )
 
             # Sprint 14: Update PO item billed_qty
             for item in self.items.all():
@@ -514,9 +524,8 @@ class PurchaseInvoice(models.Model):
             raise ValidationError("Only submitted documents can be cancelled.")
 
         with transaction.atomic():
-            # Sprint 13: Cancel linked PurchaseReceipt (reverses stock + PO received_qty)
-            if self.purchase_receipt and self.purchase_receipt.status == 'SUBMITTED':
-                self.purchase_receipt.cancel()
+            # Sprint 12: Reverse AP accounting entries
+            reverse_document_gl('PurchaseInvoice', self.id)
 
             # Sprint 14: Reverse PO item billed_qty
             for item in self.items.all():
@@ -524,10 +533,14 @@ class PurchaseInvoice(models.Model):
                     item.purchase_order_item.billed_qty -= item.quantity
                     item.purchase_order_item.save(update_fields=['billed_qty'])
 
-            # Sprint 12: Reverse AP accounting entries
-            reverse_document_gl('PurchaseInvoice', self.id)
+            # FP2: Mark CANCELLED *before* calling receipt.cancel() so the new
+            # guard in PurchaseReceipt.cancel() sees this invoice as CANCELLED.
             self.status = 'CANCELLED'
             self.save()
+
+            # Sprint 13: Cancel linked PurchaseReceipt (reverses stock + PO received_qty)
+            if self.purchase_receipt and self.purchase_receipt.status == 'SUBMITTED':
+                self.purchase_receipt.cancel()
 
     def delete(self, *args, **kwargs):
         if self.status != 'DRAFT':
@@ -934,7 +947,7 @@ class PurchaseReturn(models.Model):
                     doc_id=self.id,
                     warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
-            # Pattern 2: full Debit Note GL (Dr AP | Cr Purchase Returns | Cr GST)
+            # Pattern 2: full Debit Note GL (Dr AP | Cr SRBNB | Cr GST Receivable)
             post_purchase_return_gl(self)
 
             self.status = 'SUBMITTED'
@@ -947,17 +960,10 @@ class PurchaseReturn(models.Model):
         if self.status != 'SUBMITTED':
             raise ValidationError("Only submitted documents can be cancelled.")
 
-        # Stock GL accounts are already reversed by process_stock_movement below
-        # (doc_type='PurchaseReturnCancel').  Exclude them from reverse_document_gl
-        # to prevent the double-posting bug described in Playbook Rule 14.
-        _STOCK_GL_ACCOUNTS = [
-            'Stock In Hand',
-            'Stock Received But Not Billed',
-            'Stock Delivered But Not Billed',
-            'Cost of Goods Sold',
-        ]
-
         with transaction.atomic():
+            # Reverse the physical stock movement (brings goods back in).
+            # GL_ROUTING['PurchaseReturnCancel'] posts Dr Stock In Hand | Cr SRBNB,
+            # which is the exact mirror of the original PurchaseReturn stock GL.
             for item in self.items.all():
                 process_stock_movement(
                     batch_id=item.batch.id,
@@ -966,9 +972,15 @@ class PurchaseReturn(models.Model):
                     doc_id=self.id,
                     warehouse_id=item.warehouse_id if item.warehouse_id else None,
                 )
-            # Reverse only the Debit Note financial GL entries (AP / Purchase Returns / Tax).
-            # Stock account reversal is handled above via PurchaseReturnCancel movement.
-            reverse_document_gl('PurchaseReturn', self.id, exclude_account_names=_STOCK_GL_ACCOUNTS)
+
+            # Reverse the Debit Note financial GL entries (AP / CGST / SGST / SRBNB).
+            # These were posted to reference_type='PurchaseReturnDebitNote' by
+            # post_purchase_return_gl(), so we reverse that reference independently.
+            # No account exclusions are needed here: the debit note's SRBNB credit
+            # (Cr SRBNB) is reversed to Dr SRBNB, which exactly offsets the
+            # Cr SRBNB produced by PurchaseReturnCancel stock GL above.
+            # Net SRBNB after cancel = 0. See Playbook Rule 15.
+            reverse_document_gl('PurchaseReturnDebitNote', self.id)
 
             if hasattr(self, 'payment_entry') and self.payment_entry:
                 self.payment_entry.delete()

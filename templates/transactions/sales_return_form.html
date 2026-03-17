@@ -30,6 +30,7 @@
         color: #94a3b8;
     }
 </style>
+<script>const FROM_INVOICE_DATA = {{ from_invoice_json|safe }};</script>
 <div x-data="salesReturnLogic()" class="flex flex-col xl:flex-row min-h-screen bg-[#F8F9FA]">
 
     <!-- LEFT: Main Form Area -->
@@ -63,10 +64,26 @@
                     <!-- Row 1: Customer + Invoice (wider fields) -->
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                        <!-- Searchable Customer -->
+                        <!-- Customer (Verified State when from_invoice, search otherwise) -->
                         <div class="relative">
                             <label
                                 class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-1 mb-2 block">Customer</label>
+
+                            {% if from_invoice %}
+                            {# ── Pattern 5: Verified State — customer locked from the detail page ── #}
+                            <input type="hidden" name="customer" :value="customerId">
+                            <div class="flex items-center gap-3 h-14 px-5 bg-blue-50 border border-blue-200 rounded-2xl">
+                                <div class="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
+                                    <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <p class="text-sm font-bold text-blue-900">{{ from_invoice.customer.name }}</p>
+                                    <p class="text-xs text-blue-600">{{ from_invoice.customer.city }}</p>
+                                </div>
+                            </div>
+                            {% else %}
                             <div class="relative group" @click.away="customerOpen = false">
                                 <input type="hidden" name="customer" x-model="customerId">
                                 <input type="text" x-model="customerSearch" @input.debounce.300ms="searchCustomers()"
@@ -89,6 +106,7 @@
                                     </template>
                                 </div>
                             </div>
+                            {% endif %}
                         </div>
 
                         <!-- Original Invoice (Verified State when from_invoice, search otherwise) -->
@@ -367,7 +385,16 @@
             rows: [],
 
             init() {
-                this.addRow();
+                if (FROM_INVOICE_DATA) {
+                    // Pre-populate state from the invoice passed via ?from_invoice= query param.
+                    // fetchInvoiceItems() internally calls addRow() after loading items.
+                    this.customerId = FROM_INVOICE_DATA.customer_id;
+                    this.customerSearch = FROM_INVOICE_DATA.customer_display;
+                    this.invoiceId = FROM_INVOICE_DATA.invoice_id;
+                    this.fetchInvoiceItems(FROM_INVOICE_DATA.invoice_id);
+                } else {
+                    this.addRow();
+                }
             },
 
             async searchCustomers() {

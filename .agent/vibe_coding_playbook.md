@@ -1334,8 +1334,141 @@ Paginate at audit group (transaction card) level. Running balance is computed on
 
 ---
 
+---
+
+## Rule 19 — Django→Alpine JSON Bridge
+
+**When:** A view pre-selects a related document (e.g., `?from_invoice=<pk>`) and the template needs Alpine.js to pre-populate reactive state from that selection.
+
+**Pattern:**
+
+1. **View** — serialize the FK data as JSON using `json.dumps(...)` and pass it to the template context:
+   ```python
+   from_invoice_json = json.dumps({
+       'supplier_id': from_invoice.supplier.pk,
+       'supplier_display': f"{from_invoice.supplier.name} ({from_invoice.supplier.phone or ''})",
+       'invoice_id': from_invoice.pk,
+   }) if from_invoice else 'null'
+   return render(request, 'template.html', {'from_invoice': from_invoice, 'from_invoice_json': from_invoice_json})
+   ```
+
+2. **Template** — inject a `<script>` tag **before** the `x-data` div. Use `|safe` to bypass Django's HTML auto-escaping (without it, `"` becomes `&quot;` and the JSON is unparseable by JS):
+   ```html
+   <script>const FROM_INVOICE_DATA = {{ from_invoice_json|safe }};</script>
+   <div x-data="myLogic()">
+   ```
+
+3. **Alpine `init()`** — read the constant and pre-populate state, then trigger the async fetch:
+   ```javascript
+   init() {
+       if (FROM_INVOICE_DATA) {
+           this.supplierId = FROM_INVOICE_DATA.supplier_id;
+           this.supplierSearch = FROM_INVOICE_DATA.supplier_display;
+           this.invoiceId = FROM_INVOICE_DATA.invoice_id;
+           this.fetchInvoiceItems(FROM_INVOICE_DATA.invoice_id); // calls addRow() internally
+       } else {
+           this.addRow();
+       }
+   },
+   ```
+
+4. **Template — Verified State chip** — add a `{% if from_invoice %}` block in the supplier/invoice field sections to show a locked read-only blue chip (Pattern 5) instead of the search input:
+   ```html
+   {% if from_invoice %}
+   <input type="hidden" name="supplier" :value="supplierId">
+   <div class="flex items-center gap-3 h-14 px-5 bg-blue-50 border border-blue-200 rounded-2xl">
+       ...supplier name chip...
+   </div>
+   {% else %}
+   ...normal search input...
+   {% endif %}
+   ```
+
+**Never** rely on hidden inputs alone for Alpine state initialization — Alpine's `init()` runs before the DOM is read, so `x-model` on hidden inputs won't pre-populate reactive state on page load.
+
+---
+
+## Rule 20 — `document_actions.html` Contract
+
+The reusable `components/document_actions.html` component uses `{{ submit_url }}` and `{{ cancel_url }}` directly in `<form action="">`. This is **not** a `{% url %}` tag — it renders whatever string is passed verbatim.
+
+**Correct usage:** Pass fully resolved URL paths from the view (not URL name strings):
+```python
+# views.py
+from django.urls import reverse
+return render(request, 'template.html', {
+    'submit_url': reverse('submit_purchase_receipt', kwargs={'pk': pk}),
+    'cancel_url': reverse('cancel_purchase_receipt', kwargs={'pk': pk}),
+})
+```
+```html
+{# template.html — use template variables, not string literals #}
+{% include 'components/document_actions.html' with doc_status=receipt.status submit_url=submit_url cancel_url=cancel_url %}
+```
+
+**Broken pattern** (URL name string instead of resolved path):
+```html
+{# ✗ BROKEN — action="submit_purchase_receipt" is not a valid URL #}
+{% include 'components/document_actions.html' with submit_url='submit_purchase_receipt' doc_id=receipt.pk %}
+```
+
+---
+
+## Rule 21 — Auth Consistency in Views
+
+`views_buying_pipeline.py` and `views_pipeline.py` must **not** use `@login_required` unless a proper `LOGIN_URL` is configured in `config/settings.py` and the auth flow exists. The main `views.py` has no `@login_required` — all view files must match this pattern. Mixing decorated and undecorated views causes links between pages to silently break (302 → 404 dead-end for unauthenticated users in dev).
+
+---
+
+## Rule 22 — Two-Stage Purchase Flow (Material-First)
+
+**Receipt → Invoice, never Invoice → Receipt.**
+
+### Sequence
+1. **PurchaseReceipt.submit()** → `process_stock_movement()` → GL: `Dr Stock In Hand | Cr SRNB` → `post_save` signal auto-creates Ghost Draft Invoice (`invoice_number = DRAFT-PR-{receipt.pk}`)
+2. **User finalises Ghost Invoice**: replaces `DRAFT-PR-{pk}` with real supplier invoice number, sets `basic_rate` / `selling_price` per item
+3. **PurchaseInvoice.submit()** → GL: `Dr SRNB + Dr CGST/SGST Receivable | Cr Accounts Payable`
+
+### Invariants
+- A `PurchaseInvoice` **cannot** be submitted without a `SUBMITTED` linked `PurchaseReceipt`
+- An invoice whose `invoice_number` starts with `DRAFT-PR-` **cannot** be submitted (user must enter real supplier number)
+- `PurchaseInvoice.submit()` **never** posts stock GL entries (Rule 14)
+- `PurchaseReceipt.cancel()` **blocks** if a linked invoice is SUBMITTED; hard-deletes linked DRAFT invoices atomically
+
+### Cancellation Order
+- **Cancel submitted invoice**: `PurchaseInvoice.cancel()` → reverses AP GL → sets itself CANCELLED → then cascades to `purchase_receipt.cancel()` (stock reversal). Safe because receipt's guard sees the invoice as already CANCELLED.
+- **Cancel receipt directly**: only allowed if no linked SUBMITTED invoice exists. Any DRAFT ghost invoice is cascade-deleted inside the receipt's atomic block.
+
+### GL Double-Entry Summary
+
+| Stage | Dr | Cr |
+|---|---|---|
+| Receipt submit | Stock In Hand (cost×qty) | SRNB (cost×qty) |
+| Invoice submit | SRNB (base) + CGST + SGST | Accounts Payable (total) |
+| Invoice cancel | Accounts Payable | SRNB + CGST + SGST |
+| Receipt cancel | SRNB | Stock In Hand |
+
+Net on full cancel cycle: all accounts return to zero. Run `audit_gl_reconciliation.py` (Rule 15) after every sprint.
+
+### Troubleshooting: Orphaned Draft Invoices
+
+An orphaned draft invoice has its linked `purchase_receipt__status = 'CANCELLED'`.
+
+**Detection:**
+```python
+PurchaseInvoice.objects.filter(status='DRAFT', purchase_receipt__status='CANCELLED')
+```
+
+**Cause:** `PurchaseReceipt.cancel()` cascade-delete failed mid-transaction (very rare DB error).
+
+**Fix:** Hard-delete the orphan — `invoice.delete()` is allowed for DRAFT invoices (no GL entries exist).
+
+**Prevention:** The cascade-delete runs inside the receipt's `transaction.atomic()` block. Any DB error rolls back both the receipt cancel and the invoice delete, leaving both intact until the root cause is resolved.
+
+---
+
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
 - **Audit Script** — `C:\agri_crm\audit_gl_reconciliation.py` (read-only; run after every sprint)
-- **Last Updated** — 2026-03-11 (Sprint 19.2: GL UI — Rule 18 Transaction Threading Standards)
+- **Last Updated** — 2026-03-13 (Sprint 20: Receipt link fix, Return form pre-population, Auth consistency)

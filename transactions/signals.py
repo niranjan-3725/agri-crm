@@ -2,11 +2,7 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.db.models import Sum
 from decimal import Decimal
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
-from django.db.models import Sum
-from decimal import Decimal
-from .models import SupplierPayment, CustomerPayment
+from .models import SupplierPayment, CustomerPayment, PurchaseReceipt, PurchaseInvoice, PurchaseItem
 
 @receiver([post_save, post_delete], sender=CustomerPayment)
 def update_sales_invoice_payment_status(sender, instance, **kwargs):
@@ -99,5 +95,47 @@ def update_invoice_payment_status(sender, instance, **kwargs):
                  invoice.payment_status = 'PAID' # Zero value invoice
         else:
             invoice.payment_status = 'PARTIAL'
-            
+
         invoice.save()
+
+
+@receiver(post_save, sender=PurchaseReceipt)
+def create_ghost_purchase_invoice(sender, instance, **kwargs):
+    """Rule 22 (Material-First): On PurchaseReceipt submission, auto-create
+    a Ghost Draft PurchaseInvoice pre-linked to this receipt.
+
+    Runs inside PurchaseReceipt.submit()'s atomic block — failures roll back
+    the entire receipt submission.
+
+    Idempotency guard (FP3): skip if any invoice already linked to this receipt.
+    Ghost items are zero-rate; PurchaseItem.clean() skips 0-value validation.
+    """
+    if instance.status != 'SUBMITTED':
+        return
+    # FP3: Idempotency — handle signal double-fires and manual re-saves
+    if PurchaseInvoice.objects.filter(purchase_receipt=instance).exists():
+        return
+
+    ghost_invoice = PurchaseInvoice.objects.create(
+        status='DRAFT',
+        purchase_receipt=instance,
+        supplier=instance.supplier,
+        purchase_order=instance.purchase_order,
+        date=instance.date,
+        invoice_number=f'DRAFT-PR-{instance.pk}',
+        total_amount=0,
+        loading_charges=0,
+        additional_discount=0,
+    )
+    for item in instance.items.select_related('batch', 'purchase_order_item').all():
+        PurchaseItem.objects.create(
+            invoice=ghost_invoice,
+            batch=item.batch,
+            quantity=item.quantity,
+            basic_rate=0,
+            tax_amount=0,
+            selling_price=0,
+            profit_margin=0,
+            total_amount=0,
+            purchase_order_item=item.purchase_order_item,
+        )

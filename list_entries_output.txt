@@ -1,0 +1,32 @@
+--- Purchase Invoices ---
+PI 24: Purchase PINV-001 from Indofil Industries Limited
+
+--- Purchase Returns ---
+PR 7: Return to Indofil Industries Limited on 2026-03-12
+
+--- Supplier Payments ---
+
+--- Stock Movements ---
+SM 23: IN 20 × Avtar (IIL9876) - Qty: 20 @ Main Warehouse [PurchaseReceipt #7]
+SM 24: OUT 5 × Avtar (IIL9876) - Qty: 20 @ Main Warehouse [PurchaseReturn #7]
+SM 25: IN 5 × Avtar (IIL9876) - Qty: 20 @ Main Warehouse [PurchaseReturnCancel #7]
+
+--- GL Entries ---
+GL 131: PurchaseReceipt-7 | Stock In Hand | Dr: 12640.00 | Cr: 0.00 | Rem: PurchaseReceipt #7: 20 units @ 632.00
+GL 132: PurchaseReceipt-7 | Stock Received But Not Billed | Dr: 0.00 | Cr: 12640.00 | Rem: PurchaseReceipt #7: 20 units @ 632.00
+GL 133: PurchaseInvoice-24 | Stock Received But Not Billed | Dr: 12640.00 | Cr: 0.00 | Rem: Purchase Invoice #PINV-001: AP 14915.20
+GL 134: PurchaseInvoice-24 | CGST Receivable | Dr: 1137.60 | Cr: 0.00 | Rem: Purchase Invoice #PINV-001: AP 14915.20
+GL 135: PurchaseInvoice-24 | SGST Receivable | Dr: 1137.60 | Cr: 0.00 | Rem: Purchase Invoice #PINV-001: AP 14915.20
+GL 136: PurchaseInvoice-24 | Accounts Payable | Dr: 0.00 | Cr: 14915.20 | Rem: Purchase Invoice #PINV-001: AP 14915.20
+GL 137: PurchaseReturn-7 | Stock Received But Not Billed | Dr: 3160.00 | Cr: 0.00 | Rem: PurchaseReturn #7: -5 units @ 632.0000
+GL 138: PurchaseReturn-7 | Stock In Hand | Dr: 0.00 | Cr: 3160.00 | Rem: PurchaseReturn #7: -5 units @ 632.0000
+GL 139: PurchaseReturn-7 | Accounts Payable | Dr: 3728.80 | Cr: 0.00 | Rem: Debit Note — PurchaseReturn #7 (Inv #PINV-001)
+GL 140: PurchaseReturn-7 | Purchase Returns | Dr: 0.00 | Cr: 3160.00 | Rem: Debit Note — PurchaseReturn #7 (Inv #PINV-001)
+GL 141: PurchaseReturn-7 | CGST Input Recoverable | Dr: 0.00 | Cr: 284.40 | Rem: Debit Note — PurchaseReturn #7 (Inv #PINV-001)
+GL 142: PurchaseReturn-7 | SGST Input Recoverable | Dr: 0.00 | Cr: 284.40 | Rem: Debit Note — PurchaseReturn #7 (Inv #PINV-001)
+GL 143: PurchaseReturnCancel-7 | Stock In Hand | Dr: 3160.00 | Cr: 0.00 | Rem: PurchaseReturnCancel #7: 5 units @ 632.00
+GL 144: PurchaseReturnCancel-7 | Stock Received But Not Billed | Dr: 0.00 | Cr: 3160.00 | Rem: PurchaseReturnCancel #7: 5 units @ 632.00
+GL 145: PurchaseReturn-7 | Accounts Payable | Dr: 0.00 | Cr: 3728.80 | Rem: Reversal of GL entry #139
+GL 146: PurchaseReturn-7 | Purchase Returns | Dr: 3160.00 | Cr: 0.00 | Rem: Reversal of GL entry #140
+GL 147: PurchaseReturn-7 | CGST Input Recoverable | Dr: 284.40 | Cr: 0.00 | Rem: Reversal of GL entry #141
+GL 148: PurchaseReturn-7 | SGST Input Recoverable | Dr: 284.40 | Cr: 0.00 | Rem: Reversal of GL entry #142

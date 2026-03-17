@@ -575,10 +575,10 @@ def post_purchase_return_gl(purchase_return) -> list[GLEntry]:
         return []
 
     entries = [
-        {'account_name': 'Accounts Payable',        'debit': total_gross, 'credit': Decimal('0.00')},
-        {'account_name': 'Purchase Returns',         'debit': Decimal('0.00'), 'credit': total_net},
-        {'account_name': 'CGST Input Recoverable',  'debit': Decimal('0.00'), 'credit': total_cgst},
-        {'account_name': 'SGST Input Recoverable',  'debit': Decimal('0.00'), 'credit': total_sgst},
+        {'account_name': 'Accounts Payable',                'debit': total_gross, 'credit': Decimal('0.00')},
+        {'account_name': 'Stock Received But Not Billed',   'debit': Decimal('0.00'), 'credit': total_net},
+        {'account_name': 'CGST Receivable',                 'debit': Decimal('0.00'), 'credit': total_cgst},
+        {'account_name': 'SGST Receivable',                 'debit': Decimal('0.00'), 'credit': total_sgst},
     ]
     entries = [e for e in entries if e['debit'] != 0 or e['credit'] != 0]
 
@@ -587,8 +587,14 @@ def post_purchase_return_gl(purchase_return) -> list[GLEntry]:
         if purchase_return.original_invoice_id
         else "Freeform"
     )
+    # Tag as 'PurchaseReturnDebitNote' (not 'PurchaseReturn') so that
+    # PurchaseReturn.cancel() can independently reverse only the financial
+    # (AP/Tax) entries via reverse_document_gl('PurchaseReturnDebitNote', ...)
+    # without conflicting with the stock-GL reversal that runs via
+    # process_stock_movement(doc_type='PurchaseReturnCancel').
+    # This prevents the SRBNB double-credit bug on cancel (see Playbook Rule 15).
     return make_gl_entries(
-        reference_type='PurchaseReturn',
+        reference_type='PurchaseReturnDebitNote',
         reference_id=purchase_return.id,
         entries=entries,
         remarks=f"Debit Note — PurchaseReturn #{purchase_return.id} ({inv_ref})",

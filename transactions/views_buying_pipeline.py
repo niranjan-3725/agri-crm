@@ -1,8 +1,9 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
+from django.urls import reverse
 from django.db import transaction
 from django.contrib import messages
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 import json
 
 from .models import (
@@ -10,17 +11,17 @@ from .models import (
 )
 
 # --- PURCHASE ORDER VIEWS ---
-@login_required
+
 def purchase_order_list(request):
     orders = PurchaseOrder.objects.all().order_by('-date', '-id')
     return render(request, 'transactions/purchase_order_list.html', {'orders': orders})
 
-@login_required
+
 def purchase_order_detail(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     return render(request, 'transactions/purchase_order_detail.html', {'po': po})
 
-@login_required
+
 def create_purchase_order(request):
     suppliers = Supplier.objects.all()
     if request.method == 'POST':
@@ -77,13 +78,13 @@ def create_purchase_order(request):
         'existing_items_json': '[]'
     })
 
-@login_required
+
 def submit_purchase_order(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     po.submit()
     return redirect('purchase_order_detail', pk=pk)
 
-@login_required
+
 def cancel_purchase_order(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     po.cancel()
@@ -91,17 +92,24 @@ def cancel_purchase_order(request, pk):
 
 
 # --- PURCHASE RECEIPT VIEWS ---
-@login_required
+
 def purchase_receipt_list(request):
     receipts = PurchaseReceipt.objects.all().order_by('-date', '-id')
     return render(request, 'transactions/purchase_receipt_list.html', {'receipts': receipts})
 
-@login_required
-def purchase_receipt_detail(request, pk):
-    receipt = get_object_or_404(PurchaseReceipt, pk=pk)
-    return render(request, 'transactions/purchase_receipt_detail.html', {'receipt': receipt})
 
-@login_required
+def purchase_receipt_detail(request, pk):
+    from .models import PurchaseInvoice
+    receipt = get_object_or_404(PurchaseReceipt, pk=pk)
+    ghost_invoice = receipt.invoices.filter(status='DRAFT').first()
+    return render(request, 'transactions/purchase_receipt_detail.html', {
+        'receipt': receipt,
+        'ghost_invoice': ghost_invoice,
+        'submit_url': reverse('submit_purchase_receipt', kwargs={'pk': pk}),
+        'cancel_url': reverse('cancel_purchase_receipt', kwargs={'pk': pk}),
+    })
+
+
 def create_purchase_receipt(request):
     suppliers = Supplier.objects.all()
     purchase_order_id = request.GET.get('purchase_order_id')
@@ -176,14 +184,18 @@ def create_purchase_receipt(request):
         'supplier': supplier
     })
 
-@login_required
+
 def submit_purchase_receipt(request, pk):
     pr = get_object_or_404(PurchaseReceipt, pk=pk)
     pr.submit()
     return redirect('purchase_receipt_detail', pk=pk)
 
-@login_required
+
 def cancel_purchase_receipt(request, pk):
     pr = get_object_or_404(PurchaseReceipt, pk=pk)
-    pr.cancel()
+    try:
+        pr.cancel()
+        messages.success(request, f"Purchase Receipt #{pk} cancelled.")
+    except ValidationError as e:
+        messages.error(request, e.message if hasattr(e, 'message') else str(e))
     return redirect('purchase_receipt_detail', pk=pk)
