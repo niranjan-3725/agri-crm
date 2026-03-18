@@ -33,4 +33,21 @@
     </div>
 
 </div>
+
+{# Sprint 24: Pending Finalization warning — only shown when there are RECEIVED invoices awaiting financial settlement #}
+{% if pending_finalization_count %}
+<div class="mt-6 bg-amber-50 border-l-4 border-amber-500 p-6 rounded shadow">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-xl font-semibold text-amber-700">⚠️ Pending Finalization</h2>
+            <p class="text-amber-600 mt-2">Purchases received — awaiting invoice number &amp; financial rates</p>
+        </div>
+        <span class="text-3xl font-bold text-amber-800">{{ pending_finalization_count }}</span>
+    </div>
+    <a href="{% url 'purchase_list' %}" class="inline-block mt-4 text-amber-700 font-bold text-sm hover:underline">
+        View Purchases →
+    </a>
+</div>
+{% endif %}
+
 {% endblock %}

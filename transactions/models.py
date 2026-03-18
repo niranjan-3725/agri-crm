@@ -1,7 +1,7 @@
 from decimal import Decimal
 from datetime import timedelta
 from django.db import models, transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from django.core.exceptions import ValidationError
 
 from django.utils import timezone
@@ -9,8 +9,10 @@ from master_data.models import Supplier, Customer
 from inventory.models import Batch
 
 # Sprint 11: ERP Document State Machine
+# Sprint 24: Added RECEIVED — physical goods in, financial settlement pending
 DOCUMENT_STATUS_CHOICES = [
-    ('DRAFT', 'Draft'),
+    ('DRAFT',     'Draft'),
+    ('RECEIVED',  'Goods Received'),
     ('SUBMITTED', 'Submitted'),
     ('CANCELLED', 'Cancelled'),
 ]
@@ -415,7 +417,9 @@ class PurchaseInvoice(models.Model):
     ]
 
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
-    invoice_number = models.CharField(max_length=50, unique=True)
+    # Sprint 25: unique=True removed — conditional UniqueConstraint in Meta allows
+    # cancelled invoice numbers to be reused. Only SUBMITTED invoices must be unique.
+    invoice_number = models.CharField(max_length=50)
     date = models.DateField()
     # Sprint 23: Due Date
     due_date = models.DateField(null=True, blank=True)
@@ -452,6 +456,21 @@ class PurchaseInvoice(models.Model):
         related_name='purchase_invoices'
     )
 
+    # Sprint 23: Hybrid pattern — tracks whether physical goods have been received
+    is_received = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            # Sprint 25: Allow cancelled invoice numbers to be reused.
+            # Only SUBMITTED invoices participate in uniqueness — a new entry with
+            # the same number is allowed after the original was CANCELLED.
+            models.UniqueConstraint(
+                fields=['invoice_number', 'supplier'],
+                condition=Q(status='SUBMITTED'),
+                name='unique_active_invoice',
+            )
+        ]
+
     def save(self, *args, **kwargs):
         # Sprint 23: Auto Due Date
         if not self.due_date and self.date:
@@ -479,73 +498,131 @@ class PurchaseInvoice(models.Model):
         super().save(*args, **kwargs)
 
     def submit(self):
-        """Sprint 13: Transition DRAFT → SUBMITTED.
-
-        Auto-creates and submits a PurchaseReceipt (stock movement)
-        if one is not already linked, then posts AP GL entries.
-        """
+        """Sprint 24: Transition RECEIVED → SUBMITTED. Posts AP / Tax GL entries."""
         from accounting.services import post_purchase_invoice_gl
-        if self.status != 'DRAFT':
-            raise ValidationError("Only draft documents can be submitted.")
+        if self.status != 'RECEIVED':
+            raise ValidationError(
+                "Goods must be received before this invoice can be submitted. "
+                "Use 'Register Inward Goods' first."
+            )
+        if not self.invoice_number or not self.invoice_number.strip():
+            raise ValidationError("An invoice number is required before submission.")
 
         with transaction.atomic():
-            # Rule 22 (Material-First): receipt must exist and be submitted before invoice
-            if not self.purchase_receipt:
-                raise ValidationError(
-                    "A Purchase Invoice must be linked to a submitted Purchase Receipt "
-                    "before it can be submitted."
-                )
-            if self.purchase_receipt.status != 'SUBMITTED':
-                raise ValidationError(
-                    f"Linked Purchase Receipt #{self.purchase_receipt_id} is not yet submitted."
-                )
-            # Prevent submitting an unfinalized ghost invoice
-            if self.invoice_number.startswith('DRAFT-PR-'):
-                raise ValidationError(
-                    "Replace the draft invoice number with the supplier's actual invoice "
-                    "number before submitting."
-                )
-
             # Sprint 14: Update PO item billed_qty
             for item in self.items.all():
                 if item.purchase_order_item:
                     item.purchase_order_item.billed_qty += item.quantity
                     item.purchase_order_item.save(update_fields=['billed_qty'])
 
-            # Sprint 12: Post AP accounting entries (no stock here)
+            # Sprint 12: Post AP accounting entries (no stock here — already posted at receive)
             post_purchase_invoice_gl(self)
             self.status = 'SUBMITTED'
             self.save()
 
+    def register_inward(self):
+        """Sprint 24: Stage 1 — DRAFT → RECEIVED. Validates physical data, posts stock GL, locks document.
+
+        Posts Dr Stock In Hand / Cr Stock Received But Not Billed.
+        Once called, the document cannot be deleted — only cancelled (subject to stock guard).
+        """
+        from inventory.services import process_stock_movement
+        if self.is_received:
+            raise ValidationError("Goods have already been received for this invoice.")
+        if self.status != 'DRAFT':
+            raise ValidationError("Only DRAFT invoices can register inward goods.")
+        # Validate physical data completeness
+        for item in self.items.select_related('batch__product').all():
+            if not item.batch_id:
+                raise ValidationError("All items must have a batch assigned before goods receipt.")
+            if not item.quantity or item.quantity <= 0:
+                raise ValidationError(
+                    f"Item '{item.batch.product.name}' must have a positive quantity."
+                )
+        with transaction.atomic():
+            for item in self.items.select_related('batch', 'purchase_order_item').all():
+                process_stock_movement(
+                    batch_id=item.batch.id,
+                    quantity=item.quantity,
+                    doc_type='PurchaseInvoice',
+                    doc_id=self.id,
+                )
+                if item.purchase_order_item:
+                    item.purchase_order_item.received_qty += item.quantity
+                    item.purchase_order_item.save(update_fields=['received_qty'])
+            self.is_received = True
+            self.status = 'RECEIVED'
+            self.save(update_fields=['is_received', 'status'])
+
+    def receive_stock(self):
+        """Deprecated — backward compat alias for register_inward(). Use register_inward()."""
+        return self.register_inward()
+
     def cancel(self):
-        """Atomically cancel: reverse AP GL, cancel linked receipt."""
+        """Sprint 24: Atomically cancel from RECEIVED or SUBMITTED.
+
+        RECEIVED → CANCELLED: reverses stock GL only (no AP to reverse).
+        SUBMITTED → CANCELLED: reverses both stock GL and AP GL.
+
+        Stock guard: blocks cancel if any batch has less stock than was received
+        (indicating the stock has been sold/consumed and cannot be reversed).
+        """
         from accounting.services import reverse_document_gl
-        if self.status != 'SUBMITTED':
-            raise ValidationError("Only submitted documents can be cancelled.")
+        if self.status not in ('RECEIVED', 'SUBMITTED'):
+            raise ValidationError(
+                "Only RECEIVED or SUBMITTED documents can be cancelled. "
+                "DRAFT documents should be deleted instead."
+            )
 
         with transaction.atomic():
-            # Sprint 12: Reverse AP accounting entries
-            reverse_document_gl('PurchaseInvoice', self.id)
+            if self.is_received:
+                from inventory.services import process_stock_movement
+                # Sprint 24: Stock guard — block cancel if stock has been consumed
+                for item in self.items.select_related('batch__product').all():
+                    if item.batch.current_quantity < item.quantity:
+                        raise ValidationError(
+                            f"Cannot cancel: {item.batch.product.name} "
+                            f"(Batch {item.batch.batch_number}) has only "
+                            f"{item.batch.current_quantity} units remaining, but "
+                            f"{item.quantity} were received on this invoice. "
+                            "Stock may have been sold or consumed."
+                        )
+                # Reverse stock movements
+                for item in self.items.select_related('batch', 'purchase_order_item').all():
+                    process_stock_movement(
+                        batch_id=item.batch.id,
+                        quantity=-item.quantity,
+                        doc_type='PurchaseInvoiceCancel',
+                        doc_id=self.id,
+                    )
+                    if item.purchase_order_item:
+                        item.purchase_order_item.received_qty -= item.quantity
+                        item.purchase_order_item.save(update_fields=['received_qty'])
+                self.is_received = False
+                self.save(update_fields=['is_received'])
 
-            # Sprint 14: Reverse PO item billed_qty
-            for item in self.items.all():
-                if item.purchase_order_item:
-                    item.purchase_order_item.billed_qty -= item.quantity
-                    item.purchase_order_item.save(update_fields=['billed_qty'])
+            # Reverse AP accounting entries only if invoice was financially settled
+            if self.status == 'SUBMITTED':
+                reverse_document_gl('PurchaseInvoice', self.id)
+                # Sprint 14: Reverse PO item billed_qty
+                for item in self.items.all():
+                    if item.purchase_order_item:
+                        item.purchase_order_item.billed_qty -= item.quantity
+                        item.purchase_order_item.save(update_fields=['billed_qty'])
 
-            # FP2: Mark CANCELLED *before* calling receipt.cancel() so the new
-            # guard in PurchaseReceipt.cancel() sees this invoice as CANCELLED.
             self.status = 'CANCELLED'
             self.save()
 
-            # Sprint 13: Cancel linked PurchaseReceipt (reverses stock + PO received_qty)
+            # Legacy: Cancel linked PurchaseReceipt if present (two-stage data)
             if self.purchase_receipt and self.purchase_receipt.status == 'SUBMITTED':
                 self.purchase_receipt.cancel()
 
     def delete(self, *args, **kwargs):
-        if self.status != 'DRAFT':
+        """Sprint 24: Block delete if goods have been received. Only unreceived DRAFTs may be deleted."""
+        if self.status != 'DRAFT' or self.is_received:
             raise ValidationError(
-                "Submitted documents cannot be deleted. Use .cancel() instead."
+                "Only DRAFT (unreceived) documents can be deleted. "
+                "Cancel RECEIVED or SUBMITTED documents instead."
             )
         models.Model.delete(self, *args, **kwargs)
 

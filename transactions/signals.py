@@ -99,7 +99,8 @@ def update_invoice_payment_status(sender, instance, **kwargs):
         invoice.save()
 
 
-@receiver(post_save, sender=PurchaseReceipt)
+# DISABLED Sprint 23: Hybrid pattern replaces Two-Stage flow — no ghost invoices needed.
+# @receiver(post_save, sender=PurchaseReceipt)
 def create_ghost_purchase_invoice(sender, instance, **kwargs):
     """Rule 22 (Material-First): On PurchaseReceipt submission, auto-create
     a Ghost Draft PurchaseInvoice pre-linked to this receipt.

@@ -66,6 +66,59 @@
     {% endif %}
 </div>
 
+{% elif doc_status == 'RECEIVED' %}
+{# ── RECEIVED (Sprint 24): Goods in — awaiting financial finalization. Allow Cancel only. ── #}
+<div class="space-y-3" x-data="{ showConfirm: false }">
+    <a href="#finalization-form"
+        class="flex items-center justify-center w-full py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-bold text-base transition-all shadow-lg shadow-amber-500/20 gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        Enter Financial Details
+    </a>
+
+    <button type="button" @click="showConfirm = true"
+        class="flex items-center justify-center w-full py-4 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 rounded-2xl font-bold text-base transition-all border-2 border-red-200 hover:border-red-300 gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+        Cancel Document
+    </button>
+
+    {# Cancel Confirmation Modal #}
+    <template x-teleport="body">
+        <div x-show="showConfirm" x-cloak
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+            @click.self="showConfirm = false">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm mx-4 w-full">
+                <div class="text-center mb-4">
+                    <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-800">Cancel Received Goods?</h3>
+                    <p class="text-sm text-gray-500 mt-1">This will reverse the stock movement. Only possible if the received stock has not been sold.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button type="button" @click="showConfirm = false"
+                        class="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold text-sm transition-all">Go Back</button>
+                    <form method="POST" action="{{ cancel_url }}" class="flex-1">
+                        {% csrf_token %}
+                        <button type="submit"
+                            class="w-full py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-semibold text-sm transition-all">
+                            Yes, Cancel
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </template>
+    <p class="text-xs text-center text-gray-400 font-medium">
+        Stock received. Scroll up to enter financial details and submit.
+    </p>
+</div>
+
 {% elif doc_status == 'SUBMITTED' %}
 {# ── SUBMITTED: Show Cancel only ── #}
 <div class="space-y-3" x-data="{ showConfirm: false }">

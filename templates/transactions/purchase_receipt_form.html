@@ -261,7 +261,7 @@
 </div>
 <form method="post" action="." id="purchase-form" @submit="validateSubmit" class="max-w-5xl mx-auto space-y-10">
             {% csrf_token %}
-                <input type="hidden" name="source_purchase_order_id" value="{{ source_purchase_order_id|default: }}">
+                <input type="hidden" name="source_purchase_order_id" value="{{ source_purchase_order_id|default:'' }}">
 
 
             <!-- Header -->

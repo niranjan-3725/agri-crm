@@ -1,7 +1,7 @@
 # AgriCRM — Vibe Coding Playbook
 
 > Permanent memory for AI agents. Read this before touching templates, views, or models.
-> Last updated: 2026-03-08
+> Last updated: 2026-03-18
 
 ---
 
@@ -1420,50 +1420,209 @@ return render(request, 'template.html', {
 
 ---
 
-## Rule 22 — Two-Stage Purchase Flow (Material-First)
+## Rule 22 — Hybrid Single-Document Purchase Pattern (Sprint 23)
 
-**Receipt → Invoice, never Invoice → Receipt.**
+**Replaces:** Two-Stage Material-First Flow (Sprint 21). The standalone `PurchaseReceipt` UI is retired; the model remains in DB for legacy data only.
 
-### Sequence
-1. **PurchaseReceipt.submit()** → `process_stock_movement()` → GL: `Dr Stock In Hand | Cr SRNB` → `post_save` signal auto-creates Ghost Draft Invoice (`invoice_number = DRAFT-PR-{receipt.pk}`)
-2. **User finalises Ghost Invoice**: replaces `DRAFT-PR-{pk}` with real supplier invoice number, sets `basic_rate` / `selling_price` per item
-3. **PurchaseInvoice.submit()** → GL: `Dr SRNB + Dr CGST/SGST Receivable | Cr Accounts Payable`
+**Pattern:** One `PurchaseInvoice` covers both physical stock receipt and financial settlement.
+
+### State Machine
+
+```
+DRAFT → [receive_stock()] is_received=True → [submit()] SUBMITTED → [cancel()] CANCELLED
+```
+
+- `receive_stock()` is idempotent (guarded by `is_received` flag)
+- `submit()` requires `is_received=True` — no GL shortcut allowed
+- `cancel()` reverses ALL phases that have been completed
+
+### GL Double-Entry
+
+| Event | Dr | Cr |
+|---|---|---|
+| `receive_stock()` | Stock In Hand | SRNB |
+| `submit()` | SRNB | Accounts Payable |
+| `cancel()` (if received, not submitted) | SRNB | Stock In Hand |
+| `cancel()` (if submitted) | AP | SRNB → then SRNB | Stock In Hand |
+
+Net after full cycle: Stock In Hand debited, AP credited. Net on full cancel: all accounts return to zero.
 
 ### Invariants
-- A `PurchaseInvoice` **cannot** be submitted without a `SUBMITTED` linked `PurchaseReceipt`
-- An invoice whose `invoice_number` starts with `DRAFT-PR-` **cannot** be submitted (user must enter real supplier number)
-- `PurchaseInvoice.submit()` **never** posts stock GL entries (Rule 14)
-- `PurchaseReceipt.cancel()` **blocks** if a linked invoice is SUBMITTED; hard-deletes linked DRAFT invoices atomically
+1. `submit()` requires `is_received=True` — enforced with `ValidationError`.
+2. `receive_stock()` is idempotent: raises `ValidationError` if called twice.
+3. `cancel()` reverses ALL completed phases (stock + financial).
+4. Rule 14 holds: stock GL **only** in `receive_stock()`; AP GL **only** in `submit()`.
+5. Legacy two-stage data: `cancel()` still cascades to linked `PurchaseReceipt` if present.
 
-### Cancellation Order
-- **Cancel submitted invoice**: `PurchaseInvoice.cancel()` → reverses AP GL → sets itself CANCELLED → then cascades to `purchase_receipt.cancel()` (stock reversal). Safe because receipt's guard sees the invoice as already CANCELLED.
-- **Cancel receipt directly**: only allowed if no linked SUBMITTED invoice exists. Any DRAFT ghost invoice is cascade-deleted inside the receipt's atomic block.
+### UI Signals
+- **"Receive Goods" button**: emerald, shown in right panel only when `status == 'DRAFT'` and `not is_received`
+- **"Goods Received" card**: Pattern 5 blue-tint card shown at top of detail page when `is_received=True`
+- **Stock status chip**: "Received" (emerald) or "Pending" (gray) shown in purchase list alongside payment status
 
-### GL Double-Entry Summary
+### Troubleshooting: Orphaned SRNB
 
-| Stage | Dr | Cr |
-|---|---|---|
-| Receipt submit | Stock In Hand (cost×qty) | SRNB (cost×qty) |
-| Invoice submit | SRNB (base) + CGST + SGST | Accounts Payable (total) |
-| Invoice cancel | Accounts Payable | SRNB + CGST + SGST |
-| Receipt cancel | SRNB | Stock In Hand |
-
-Net on full cancel cycle: all accounts return to zero. Run `audit_gl_reconciliation.py` (Rule 15) after every sprint.
-
-### Troubleshooting: Orphaned Draft Invoices
-
-An orphaned draft invoice has its linked `purchase_receipt__status = 'CANCELLED'`.
+If an invoice is received (`is_received=True`) but the invoice record is deleted directly (bypassing `cancel()`), SRNB is debited but never credited.
 
 **Detection:**
 ```python
-PurchaseInvoice.objects.filter(status='DRAFT', purchase_receipt__status='CANCELLED')
+from django.db.models import Sum
+from accounting.models import GLEntry
+GLEntry.objects.filter(account__name='SRNB').aggregate(
+    net=Sum('debit') - Sum('credit')
+)
+# Should be 0. Non-zero = orphaned SRNB balance.
 ```
 
-**Cause:** `PurchaseReceipt.cancel()` cascade-delete failed mid-transaction (very rare DB error).
+**Prevention:** The `delete()` guard requires status `DRAFT` — but `receive_stock()` doesn't change `status`. Always call `invoice.cancel()` before deleting a received-but-not-submitted invoice. The DRAFT status + `is_received=True` combination is the only risky state.
 
-**Fix:** Hard-delete the orphan — `invoice.delete()` is allowed for DRAFT invoices (no GL entries exist).
+---
 
-**Prevention:** The cascade-delete runs inside the receipt's `transaction.atomic()` block. Any DB error rolls back both the receipt cancel and the invoice delete, leaving both intact until the root cause is resolved.
+## Rule 23 — Rendering Integrity: The Literal String Guard
+
+**Symptom:** Template variables appear as literal strings in the browser, OR the page throws a `TemplateSyntaxError`.
+
+### Root Cause #1 — Missing `|default` argument (TemplateSyntaxError)
+
+Django's `|default` filter requires **both** the filter name AND a fallback value after the colon:
+
+```html
+<!-- ✗ BROKEN — TemplateSyntaxError -->
+<input value="{{ source_purchase_order_id|default: }}">
+
+<!-- ✓ CORRECT -->
+<input value="{{ source_purchase_order_id|default:'' }}">
+<input value="{{ count|default:0 }}">
+```
+
+**Rule:** After any `|default`, the colon must be immediately followed by a quoted string or integer. An empty-value `|default:` is a syntax error.
+
+### Root Cause #2 — Copy-paste scaffolding from another module
+
+When duplicating a template from another module (e.g., building a Purchase Receipt list from the Sales Order list), silently-wrong artefacts survive:
+
+| What to check | Common wrong value | Correct value |
+|---|---|---|
+| Section header | "Selling Pipeline" | "Buying Pipeline" |
+| Document ID prefix | `SO-{{ o.pk }}` | `PR-{{ o.pk }}` |
+| Progress bar property | `o.per_delivered` (Sales model) | must exist on the new model |
+| Empty state text | "No sales receipts found." | "No Purchase Receipts yet." |
+
+**Rule:** A missing model property does NOT raise an error in Django templates — it silently renders as an empty string. This makes the bug invisible until someone notices the 0% progress bars.
+
+### Root Cause #3 — Iterating a queryset with a non-existent `@property`
+
+If `{{ o.per_billed }}` is used in a list template but `per_billed` only exists on a different model class (e.g., `PurchaseOrder`, not `PurchaseReceipt`), the template renders the progress bar with `width: %` — visually a flat 0% line, no error, hard to spot.
+
+**Fix:** Always verify that properties used in loop templates exist on the model actually being iterated. Cross-check with `models.py` before deploying.
+
+### Guard Checklist (run before committing any new template)
+
+1. `grep '\|default:'` — every match must have a non-empty value after the colon
+2. `grep 'Pipeline\|SO-\|per_delivered\|per_billed'` — verify each is correct for the current module
+3. `{{ o.<property> }}` — cross-check with the model class being iterated in the view
+4. Test with a **DRAFT** object and a **SUBMITTED** object — verify chips/badges render correctly in both states
+
+---
+
+## 24. The Two-Stage Purchase Invariant (Sprint 24)
+
+**State machine:** `DRAFT → RECEIVED → SUBMITTED → CANCELLED`
+
+### Stage 1 — Physical (register_inward)
+- Triggered by the **"Register Inward Goods"** button on the create form or the **"Register Inward Goods"** button on the DRAFT detail page.
+- Posts `Dr Stock In Hand / Cr SRNB` via `process_stock_movement()`.
+- Sets `is_received=True`, `status='RECEIVED'`.
+- After this, the document is **immutable** — it cannot be deleted, only cancelled.
+
+### Stage 2 — Financial (finalize_purchase_invoice / submit)
+- Triggered by the **"Submit Invoice"** button inside the Stage 2 finalization form on the detail page.
+- Updates `invoice_number`, per-item `basic_rate`, `tax_amount`, `total_amount`, `loading_charges`, `additional_discount`, `payment_status`.
+- Then calls `invoice.submit()` which posts `Dr SRNB / Cr Accounts Payable`.
+- Sets `status='SUBMITTED'`. SRNB account nets exactly `0.00` after this.
+
+### Hard Rules
+1. **DRAFT save = zero GL/stock impact.** The two-button form sends `register_inward_on_save=1` for Stage 1, or no flag for plain draft save.
+2. **`is_received=True` → point of no return.** `delete()` raises `ValidationError` if `is_received=True` or `status != 'DRAFT'`.
+3. **Cancel from RECEIVED:** validates `batch.current_quantity >= item.quantity` for every item BEFORE reversing stock. Blocks cancel if stock was partially sold.
+4. **Cancel from SUBMITTED:** reverses both stock GL AND financial GL atomically. `billed_qty` is decremented on linked PO items.
+5. **Perfect Reconcile:** after `SUBMITTED`, SRNB net = `0.00` exactly. Verify via audit script.
+6. **`finalize_purchase_invoice` is the sole path** from `RECEIVED → SUBMITTED` with financial field updates. Direct `submit()` calls are blocked if `status != 'RECEIVED'`.
+7. **`receive_stock()` is a deprecated alias** for `register_inward()`. Do not call `receive_stock()` in new code.
+
+### Data Migration
+`0027_purchaseinvoice_received_status.py` — promotes any legacy `is_received=True, status='DRAFT'` records to `status='RECEIVED'`.
+
+### UI Conventions
+- **DRAFT detail page:** amber "Register Inward Goods" button in right panel + DRAFT warning banner.
+- **RECEIVED detail page:** amber "⚠️ Goods Received — Pending Financial Finalization" banner + inline finalization form in scrollable section + "Enter Financial Details" anchor + "Cancel Document" in footer actions.
+- **SUBMITTED detail page:** green "Invoice Finalized" verified-state card.
+- **Status badge:** `document_status_badge.html` has amber "Goods Received" badge for `RECEIVED`.
+- **Dashboard:** amber `pending_finalization_count` widget (shown only when count > 0).
+- **Purchase list:** amber "Received" chip in lifecycle column; "Needs Finalization" chip in receipt column.
+- **Ledger timeline:** `PurchaseInvoice` GL entries display as "Purchase (Finalized)"; `PurchaseInvoiceCancel` as "Purchase (Cancelled — Stock Reversed)"; `PurchaseReceipt` (legacy) as "Purchase (Goods Received)".
+
+---
+
+## Rule 24 — The Two-Stage Purchase Invariant
+
+**[IMPLEMENTED 2026-03-18 — Sprint 24]**
+
+All PurchaseInvoice documents follow a mandatory two-stage lifecycle:
+
+- **Stage 1 (Physical):** `register_inward()` → `DRAFT → RECEIVED`. Posts `Dr Stock In Hand / Cr SRNB`. Physical fields only (Product, Batch, Qty, Expiry). Invoice number may be deferred.
+- **Stage 2 (Financial):** `finalize_purchase_invoice` view + `submit()` → `RECEIVED → SUBMITTED`. Posts `Dr SRNB / Cr AP`. Financial fields (rates, taxes, landed cost).
+
+**Invariants:**
+1. `status='RECEIVED'` means stock is on the shelf, SRNB has a debit balance, AP is not yet credited.
+2. `is_received=True` → point of no return. `delete()` raises `ValidationError` if `is_received=True` or `status != 'DRAFT'`.
+3. **Cancel from RECEIVED:** validates `batch.current_quantity >= item.quantity` for every item BEFORE reversing stock. Blocks cancel if stock was partially sold.
+4. **Cancel from SUBMITTED:** reverses both stock GL AND financial GL atomically. `billed_qty` is decremented on linked PO items.
+5. **Perfect Reconcile:** after `SUBMITTED`, SRNB net = `0.00` exactly. Verify via audit script.
+6. **`finalize_purchase_invoice` is the sole path** from `RECEIVED → SUBMITTED` with financial field updates. Direct `submit()` calls are blocked if `status != 'RECEIVED'`.
+7. **`receive_stock()` is a deprecated alias** for `register_inward()`. Do not call `receive_stock()` in new code.
+
+### Data Migration
+`0027_purchaseinvoice_received_status.py` — promotes any legacy `is_received=True, status='DRAFT'` records to `status='RECEIVED'`.
+
+### UI Conventions
+- **DRAFT detail page:** amber "Register Inward Goods" button in right panel + DRAFT warning banner.
+- **RECEIVED detail page:** amber "⚠️ Goods Received — Pending Financial Finalization" banner + inline finalization form in scrollable section + "Enter Financial Details" anchor + "Cancel Document" in footer actions.
+- **SUBMITTED detail page:** green "Invoice Finalized" verified-state card.
+- **Status badge:** `document_status_badge.html` has amber "Goods Received" badge for `RECEIVED`.
+- **Dashboard:** amber `pending_finalization_count` widget (shown only when count > 0).
+- **Purchase list:** amber "Received" chip in lifecycle column; "Needs Finalization" chip in receipt column.
+- **Ledger timeline:** `PurchaseInvoice` GL entries display as "Purchase (Finalized)"; `PurchaseInvoiceCancel` as "Purchase (Cancelled — Stock Reversed)"; `PurchaseReceipt` (legacy) as "Purchase (Goods Received)".
+
+---
+
+## Rule 25 — The Linear Narrative UI Invariant
+
+**[IMPLEMENTED 2026-03-18 — Sprint 25]**
+
+Purchase entry forms use a **Physical-First, Progressive Disclosure** pattern. Never force financial noise on warehouse workers. Never bury critical accounting in a sidebar.
+
+### The Two Modes
+
+| Mode | Who uses it | Visible fields | Hidden fields |
+|---|---|---|---|
+| **Physical (default)** | Warehouse staff | Product, Batch, Size/Unit, Mfg Date, Exp Date, MRP, Qty | Basic Rate, Tax%, Margin%, Sell Price, Payment Summary |
+| **Financial (expanded)** | Accountant | Everything | Nothing |
+
+### Implementation Rules
+
+1. **Zone 3 is gated.** Every per-item financial row (Basic Rate, Tax%, Margin%, Sell Price, Total) is wrapped in `x-show="showFinancials"` with a CSS transition. It is `false` by default.
+2. **`showFinancials` is a per-form Alpine.js boolean.** A "Show Pricing & Margins" toggle button between Zone 2 and Zone 3 flips it.
+3. **Validation is gated too.** `rowErr()` financial flags (`mrpEmpty`, `rateEmpty`, `sellEmpty`, etc.) evaluate `this.showFinancials &&` before their condition. `hasErrors` skips invoice number and financial field checks when `!showFinancials`.
+4. **Invoice Number is optional in physical mode.** If omitted, `create_purchase` auto-generates a `DRAFT-{timestamp}` reference. The real invoice number is entered during Stage 2 finalization via `finalize_purchase_invoice`.
+5. **Right sidebar adapts.** When `!showFinancials`, the sidebar shows a Physical Receipt Mode placeholder with item count + total qty. The Grand Total display shows `—` with gray text.
+6. **Landed Cost Distribution.** `finalize_purchase_invoice` proportionally distributes `loading_charges` across line items by `item.total_amount / grand_total`. Each `batch.purchase_price` is updated to the landed rate. MAP is then recalculated from scratch via `recalculate_product_map_from_batches()` — this corrects the MAP that was initially posted with rate=0 at Stage 1.
+7. **Conditional UniqueConstraint.** `invoice_number` uniqueness is scoped to `status='SUBMITTED'` only via `UniqueConstraint(condition=Q(status='SUBMITTED'))`. CANCELLED invoice numbers can be freely reused. For MySQL (which does not support partial indexes), enforcement is at the Django application layer via `validate_unique()`.
+
+### Anti-Patterns (Never Do)
+- **Never** show financial columns to a warehouse worker by default.
+- **Never** put loading/hamali/discount in a sidebar. They belong in the Financial section.
+- **Never** block a Stage 1 save because invoice number or rate is missing.
+- **Never** recalculate MAP in the create step with a 0 rate — skip it and correct at finalization.
 
 ---
 
@@ -1471,4 +1630,4 @@ PurchaseInvoice.objects.filter(status='DRAFT', purchase_receipt__status='CANCELL
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
 - **Audit Script** — `C:\agri_crm\audit_gl_reconciliation.py` (read-only; run after every sprint)
-- **Last Updated** — 2026-03-13 (Sprint 20: Receipt link fix, Return form pre-population, Auth consistency)
+- **Last Updated** — 2026-03-18 (Sprint 25: Linear Narrative UI — Physical-First form, Conditional UniqueConstraint, Landed Cost Distribution)

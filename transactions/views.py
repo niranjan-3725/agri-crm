@@ -704,7 +704,7 @@ def purchase_list(request):
     # Annotate suppliers with total purchase amount
     top_suppliers = Supplier.objects.annotate(
         total_purchased=Sum('purchaseinvoice__total_amount')
-    ).order_by('-total_purchased')[:5]
+    ).filter(total_purchased__isnull=False).order_by('-total_purchased')[:5]
 
     # Pagination
     paginator = Paginator(invoices_list, 10) # Matches 'ITEMS_PER_PAGE = 5' roughly, or 10
@@ -880,13 +880,23 @@ def purchase_detail(request, pk):
             reference_type='PurchaseReceipt', reference_id=invoice.purchase_receipt_id
         ).select_related('account').order_by('created_at'))
 
-    # Stock movements from linked PurchaseReceipt
+    # Sprint 23: Stock movements — from linked receipt (legacy) and directly on invoice (hybrid)
     stock_movements = []
     if invoice.purchase_receipt_id:
-        stock_movements = StockMovement.objects.filter(
+        stock_movements = list(StockMovement.objects.filter(
             reference_document_type='PurchaseReceipt',
             reference_document_id=invoice.purchase_receipt_id
-        ).select_related('batch__product', 'warehouse').order_by('created_at')
+        ).select_related('batch__product', 'warehouse').order_by('created_at'))
+    # Hybrid pattern: movements directly linked to this invoice
+    stock_movements += list(StockMovement.objects.filter(
+        reference_document_type='PurchaseInvoice',
+        reference_document_id=pk
+    ).select_related('batch__product', 'warehouse').order_by('created_at'))
+    if invoice.status == 'CANCELLED':
+        stock_movements += list(StockMovement.objects.filter(
+            reference_document_type='PurchaseInvoiceCancel',
+            reference_document_id=pk
+        ).select_related('batch__product', 'warehouse').order_by('created_at'))
 
     gl_total_debit = sum(e.debit for e in gl_entries)
     gl_total_credit = sum(e.credit for e in gl_entries)
@@ -903,6 +913,8 @@ def purchase_detail(request, pk):
         'submit_url': f'/purchases/{invoice.pk}/submit/',
         'cancel_url': f'/purchases/{invoice.pk}/cancel/',
         'edit_url': f'/purchases/{invoice.pk}/edit/',
+        'receive_url': f'/purchases/{invoice.pk}/receive/',
+        'finalize_url': f'/purchases/{invoice.pk}/finalize/',
     })
 
 def purchase_edit(request, pk):
@@ -1188,7 +1200,12 @@ def create_purchase(request):
         try:
             with transaction.atomic():
                 supplier_id = request.POST.get('supplier')
-                invoice_number = request.POST.get('invoice_number')
+                # Sprint 25: Invoice number is optional in Stage 1 (physical receipt).
+                # If omitted, auto-generate a temp reference; accountant fills the real
+                # number during Stage 2 finalization on the detail page.
+                invoice_number = (request.POST.get('invoice_number') or '').strip()
+                if not invoice_number:
+                    invoice_number = f"DRAFT-{timezone.now().strftime('%Y%m%d%H%M%S')}"
                 date = request.POST.get('date')
                 
                 # Validate supplier_id before querying
@@ -1274,19 +1291,22 @@ def create_purchase(request):
                     margin_val = float(margins[i]) if i < len(margins) and margins[i] else 0
 
                     # ── Backend price integrity safety net ────────────────────
+                    # Sprint 25: Only validate if rate is provided (Stage 1 physical
+                    # entry may skip financial data — it's filled during finalization).
                     row_label = f"Item {i+1} ({p_name})"
-                    if mrp > 0 and rate_pre_tax > mrp:
-                        raise ValidationError(
-                            f"{row_label}: Basic Rate (₹{rate_pre_tax:.2f}) cannot exceed MRP (₹{mrp:.2f})."
-                        )
-                    if mrp > 0 and sell_price > mrp:
-                        raise ValidationError(
-                            f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot exceed MRP (₹{mrp:.2f})."
-                        )
-                    if rate_pre_tax > 0 and sell_price > 0 and sell_price < rate_pre_tax:
-                        raise ValidationError(
-                            f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot be less than Basic Rate (₹{rate_pre_tax:.2f})."
-                        )
+                    if rate_pre_tax > 0:
+                        if mrp > 0 and rate_pre_tax > mrp:
+                            raise ValidationError(
+                                f"{row_label}: Basic Rate (₹{rate_pre_tax:.2f}) cannot exceed MRP (₹{mrp:.2f})."
+                            )
+                        if mrp > 0 and sell_price > mrp:
+                            raise ValidationError(
+                                f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot exceed MRP (₹{mrp:.2f})."
+                            )
+                        if sell_price > 0 and sell_price < rate_pre_tax:
+                            raise ValidationError(
+                                f"{row_label}: Sell Price (₹{sell_price:.2f}) cannot be less than Basic Rate (₹{rate_pre_tax:.2f})."
+                            )
 
                     # Tax Calculation
                     tax_rate = float(product.category.total_tax)
@@ -1367,9 +1387,12 @@ def create_purchase(request):
                 invoice.amount_paid = amount_paid
                 invoice.save()
 
+                # Sprint 24: "Register Inward Goods" button — Stage 1 stock receipt on save
+                if request.POST.get('register_inward_on_save'):
+                    invoice.register_inward()
+
                 # Sprint 20: Redirect to the DRAFT detail page so the user
                 # can review the invoice and explicitly click "Submit".
-                # Saving ≠ submitting — no stock or GL impact until submit().
                 return redirect('purchase_detail', pk=invoice.pk)
 
         except ValidationError as e:
@@ -2455,4 +2478,103 @@ def cancel_purchase_invoice(request, pk):
         messages.success(request, f"Invoice {invoice.invoice_number} cancelled. All entries reversed.")
     except ValidationError as e:
         messages.error(request, str(e))
+    return redirect('purchase_detail', pk=pk)
+
+
+def receive_purchase_goods(request, pk):
+    """Sprint 24: Stage 1 — DRAFT → RECEIVED. Posts stock GL (Dr Stock In Hand / Cr SRNB)."""
+    if request.method != 'POST':
+        return redirect('purchase_detail', pk=pk)
+    invoice = get_object_or_404(PurchaseInvoice, pk=pk)
+    try:
+        invoice.register_inward()
+        messages.success(request, f"Goods received for Invoice #{pk}. Status: RECEIVED — pending financial finalization.")
+    except ValidationError as e:
+        messages.error(request, e.message if hasattr(e, 'message') else str(e))
+    return redirect('purchase_detail', pk=pk)
+
+
+@require_POST
+def finalize_purchase_invoice(request, pk):
+    """Sprint 24/25: Stage 2 — RECEIVED → SUBMITTED.
+
+    Updates financial fields, distributes landed cost (loading/hamali/transport)
+    proportionally across line items, recalculates MAP for each affected product,
+    then calls submit() to post AP GL and transition to SUBMITTED.
+    """
+    invoice = get_object_or_404(PurchaseInvoice, pk=pk)
+    if invoice.status != 'RECEIVED':
+        messages.error(request, "Only RECEIVED invoices can be finalized.")
+        return redirect('purchase_detail', pk=pk)
+    try:
+        with transaction.atomic():
+            # Update header financial fields
+            # Sprint 25: real invoice_number replaces the auto-generated DRAFT-xxx temp ref
+            new_inv_num = request.POST.get('invoice_number', '').strip()
+            invoice.invoice_number = new_inv_num or invoice.invoice_number
+            invoice.loading_charges = Decimal(request.POST.get('loading_charges') or 0)
+            invoice.additional_discount = Decimal(request.POST.get('discount') or 0)
+
+            # Update per-item rates
+            grand_total = Decimal('0')
+            items_list = list(invoice.items.select_related('batch__product__category').all())
+            for item in items_list:
+                rate_key = f'rate_{item.id}'
+                if rate_key in request.POST:
+                    rate = Decimal(request.POST[rate_key] or 0)
+                    item.basic_rate = rate
+                    tax_rate = Decimal('0')
+                    if item.batch and item.batch.product and item.batch.product.category:
+                        tax_rate = Decimal(str(item.batch.product.category.total_tax or 0))
+                    item.tax_amount = (rate * tax_rate / 100 * item.quantity).quantize(Decimal('0.01'))
+                    item.total_amount = (rate + rate * tax_rate / 100) * item.quantity
+                    item.save(update_fields=['basic_rate', 'tax_amount', 'total_amount'])
+                grand_total += item.total_amount
+
+            invoice.total_amount = grand_total + invoice.loading_charges - invoice.additional_discount
+
+            # ── Sprint 25: Landed Cost Distribution ──────────────────────────
+            # Proportionally distribute loading/hamali/transport charges across
+            # line items so each Batch's purchase_price reflects true landed cost.
+            # After updating purchase_price, recalculate MAP from scratch for each
+            # product (corrects the MAP that was posted with rate=0 at Stage 1).
+            if invoice.loading_charges > 0 and grand_total > 0:
+                from inventory.services import recalculate_product_map_from_batches
+                from master_data.models import Product as ProductModel
+                products_to_recalc = set()
+                for item in items_list:
+                    if item.quantity and item.quantity > 0 and item.total_amount > 0:
+                        proportion = item.total_amount / grand_total
+                        loading_for_item = (
+                            invoice.loading_charges * proportion
+                        ).quantize(Decimal('0.0001'))
+                        # Landed rate = base rate + proportional loading per unit
+                        landed_rate = item.basic_rate + (loading_for_item / item.quantity)
+                        item.batch.purchase_price = landed_rate.quantize(Decimal('0.0001'))
+                        item.batch.save(update_fields=['purchase_price'])
+                        products_to_recalc.add(item.batch.product_id)
+                # Recalculate MAP for all affected products from current batch data
+                for product_pk in products_to_recalc:
+                    product_locked = ProductModel.objects.select_for_update().get(
+                        pk=product_pk
+                    )
+                    recalculate_product_map_from_batches(product_locked)
+
+            # Payment status
+            payment_status = request.POST.get('payment_status', 'UNPAID')
+            amount_paid = Decimal(request.POST.get('amount_paid') or 0)
+            if payment_status == 'PAID':
+                amount_paid = invoice.total_amount
+            invoice.payment_status = payment_status
+            invoice.amount_paid = amount_paid
+            invoice.save()
+
+            # Submit: posts AP GL and transitions to SUBMITTED
+            invoice.submit()
+
+        messages.success(request, f"Invoice {invoice.invoice_number} finalized and submitted successfully.")
+    except ValidationError as e:
+        messages.error(request, e.message if hasattr(e, 'message') else str(e))
+    except Exception as e:
+        messages.error(request, f"Finalization failed: {e}")
     return redirect('purchase_detail', pk=pk)

@@ -2,63 +2,92 @@
 {% load humanize %}
 {% block content %}
 <div class='p-10 max-w-5xl mx-auto space-y-8 pb-32'>
+
+    <!-- Breadcrumb -->
     <div class='flex items-center gap-4 flex-wrap'>
         <a href='{% url "purchase_receipt_list" %}'
             class='text-gray-400 text-sm font-bold uppercase tracking-widest hover:text-gray-900 transition-colors'>&larr; Back to Purchase Receipts</a>
         {% with linked_invoice=receipt.invoices.first %}
         {% if linked_invoice %}
         <a href='{% url "purchase_detail" linked_invoice.pk %}'
-            class='text-violet-600 text-sm font-bold uppercase tracking-widest hover:text-violet-900 transition-colors'>&larr; Back to Invoice #{{ linked_invoice.pk }}</a>
+            class='text-violet-600 text-sm font-bold uppercase tracking-widest hover:text-violet-900 transition-colors'>View Invoice #{{ linked_invoice.pk }} &rarr;</a>
         {% endif %}
         {% endwith %}
     </div>
 
+    <!-- Page header -->
     <div class='flex justify-between items-start'>
         <div>
-            <h1 class='text-5xl font-bold text-gray-900 tracking-tight'>Purchase Receipt #{{ receipt.pk }}</h1>
-            <p class='text-gray-500 text-lg mt-2 font-medium'>Receive from: <span class='text-gray-900'>{{
-                    receipt.supplier.name }}</span></p>
+            <span class='text-xs font-bold text-gray-400 uppercase tracking-widest'>Buying Pipeline</span>
+            <h1 class='text-5xl font-bold text-gray-900 tracking-tight mt-1'>Purchase Receipt #{{ receipt.pk }}</h1>
         </div>
         <div class='text-right space-y-3'>
             {% include 'components/document_status_badge.html' with doc_status=receipt.status %}
             {% if receipt.purchase_order %}
-            <div class='text-sm font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-lg'>From PO-{{
-                receipt.purchase_order.pk }}</div>
+            <div class='text-sm font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-lg'>From PO-{{ receipt.purchase_order.pk }}</div>
             {% endif %}
         </div>
     </div>
 
-    <div class='bg-white rounded-3xl p-8 shadow-sm border border-gray-100'>
-        <h3 class='text-xl font-bold mb-6 text-gray-900'>Items Received</h3>
-        <table class='w-full text-left'>
-            <tr class='text-[10px] text-gray-400 font-bold uppercase tracking-widest border-b border-gray-100'>
-                <th class='pb-3'>Product</th>
-                <th class='pb-3'>Batch</th>
-                <th class='pb-3'>Received Qty</th>
-            </tr>
-            {% for item in receipt.items.all %}
-            <tr class='border-b border-gray-50 last:border-none'>
-                <td class='py-4 font-bold text-gray-900'>{{ item.batch.product.name }}</td>
-                <td class='py-4 text-gray-500'>{{ item.batch.batch_number }}</td>
-                <td class='py-4 text-gray-900 font-bold'>{{ item.quantity }}</td>
-            </tr>
-            {% endfor %}
-        </table>
-    </div>
-
-    <!-- UI Alert Directive Validation -->
-    <div class='bg-orange-50 border border-orange-200 text-orange-800 p-5 rounded-2xl flex items-start gap-3'>
-        <svg class="w-6 h-6 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <div>
-            <span class='font-bold block mb-1'>Ledger Impact Warning</span>
-            <span class='text-sm'>Submitting this document definitively adds physical stock to the warehouse and hits
-                SRNB clearing. It does not hit AP.</span>
+    <!-- Pattern 6: Summary Hero Cards -->
+    <div class='grid grid-cols-2 md:grid-cols-4 gap-4'>
+        <div class='bg-white rounded-2xl p-5 border border-gray-100'>
+            <p class='text-xs font-bold text-gray-400 uppercase tracking-wider mb-1'>Supplier</p>
+            <p class='text-lg font-bold text-gray-900 truncate'>{{ receipt.supplier.name }}</p>
+        </div>
+        <div class='bg-white rounded-2xl p-5 border border-gray-100'>
+            <p class='text-xs font-bold text-gray-400 uppercase tracking-wider mb-1'>Date</p>
+            <p class='text-lg font-bold text-gray-900'>{{ receipt.date|date:"d M Y" }}</p>
+        </div>
+        <div class='bg-white rounded-2xl p-5 border border-gray-100'>
+            <p class='text-xs font-bold text-gray-400 uppercase tracking-wider mb-1'>Source PO</p>
+            <p class='text-lg font-bold text-gray-900'>{% if receipt.purchase_order %}PO-{{ receipt.purchase_order.pk }}{% else %}&mdash;{% endif %}</p>
+        </div>
+        <div class='bg-white rounded-2xl p-5 border border-gray-100'>
+            <p class='text-xs font-bold text-gray-400 uppercase tracking-wider mb-1'>Line Items</p>
+            <p class='text-lg font-bold text-gray-900'>{{ receipt.items.count }}</p>
         </div>
     </div>
 
+    <!-- Items Received -->
+    <div class='bg-white rounded-3xl p-8 shadow-sm border border-gray-100'>
+        <h3 class='text-xl font-bold mb-6 text-gray-900'>Items Received</h3>
+        <table class='w-full text-left'>
+            <thead>
+                <tr class='text-[10px] text-gray-400 font-bold uppercase tracking-widest border-b border-gray-100'>
+                    <th class='pb-3'>Product</th>
+                    <th class='pb-3'>Batch</th>
+                    <th class='pb-3 text-right'>Received Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in receipt.items.all %}
+            <tr class='border-b border-gray-50 last:border-none'>
+                <td class='py-4 font-bold text-gray-900'>{{ item.batch.product.name }}</td>
+                <td class='py-4 text-gray-500 font-mono text-sm'>{{ item.batch.batch_number }}</td>
+                <td class='py-4 text-gray-900 font-bold text-right'>{{ item.quantity }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pattern 4: Audit Trail — Ledger Timeline -->
+    {% if gl_entries or stock_movements %}
+    {% include 'components/ledger_timeline.html' with gl_entries=gl_entries stock_movements=stock_movements gl_total_debit=gl_total_debit gl_total_credit=gl_total_credit %}
+    {% else %}
+    <div class='bg-orange-50 border border-orange-200 text-orange-800 p-5 rounded-2xl flex items-start gap-3'>
+        <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div>
+            <span class='font-bold block mb-1'>Pending GL</span>
+            <span class='text-sm'>Submit this receipt to post Dr Stock In Hand / Cr SRNB entries.</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Actions + Ghost Invoice Chip -->
     <div class='flex flex-wrap gap-4 p-6 bg-gray-50 rounded-2xl border border-gray-100'>
         {% include 'components/document_actions.html' with doc_status=receipt.status submit_url=submit_url cancel_url=cancel_url %}
 
@@ -74,5 +103,6 @@
         </a>
         {% endif %}
     </div>
+
 </div>
 {% endblock %}

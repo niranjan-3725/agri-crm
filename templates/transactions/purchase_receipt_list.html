@@ -4,40 +4,64 @@
 <div class='p-10 max-w-7xl mx-auto'>
     <div class='flex justify-between items-end mb-8'>
         <div>
-            <span class='text-xs font-bold text-gray-400 uppercase tracking-widest'>Selling Pipeline</span>
+            <span class='text-xs font-bold text-gray-400 uppercase tracking-widest'>Buying Pipeline</span>
             <h1 class='text-4xl font-bold text-gray-900'>Purchase Receipts</h1>
         </div>
-        <a href='{% url "create_purchase_receipt" %}' class='bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold'>+ New Purchase Receipt</a>
+        <a href='{% url "create_purchase_receipt" %}' class='bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold shadow-lg'>+ New Receipt</a>
     </div>
-    <div class='space-y-4'>
+    <div class='space-y-3'>
         {% for o in receipts %}
-        <div class='bg-white p-6 rounded-2xl breceipt border-gray-100 flex justify-between items-center hover:border-gray-300 transition-all'>
-            <div class='w-48'>
-                <a href='{% url "purchase_receipt_detail" o.pk %}' class='text-lg font-bold hover:text-blue-600 transition-colors'>SO-{{ o.pk }}</a>
-                <div class='text-xs text-gray-400 mt-1'>{{ o.date }}</div>
-            </div>
-            <div class='flex-1 font-bold text-gray-900'>{{ o.supplier.name }}</div>
-            
-            <div class='w-32 space-y-1' title='Delivery Progress'>
-                <div class='text-xs font-bold text-gray-500'>Delivered</div>
-                <div class='h-2 bg-gray-100 rounded-full overflow-hidden w-24'>
-                    <div class='h-full bg-violet-500 rounded-full' style='width: {{ o.per_delivered }}%'></div>
-                </div>
-            </div>
-            <div class='w-32 space-y-1' title='Billing Progress'>
-                <div class='text-xs font-bold text-gray-500'>Billed</div>
-                <div class='h-2 bg-gray-100 rounded-full overflow-hidden w-24'>
-                    <div class='h-full bg-blue-500 rounded-full' style='width: {{ o.per_billed }}%'></div>
-                </div>
+        {% with ghost=o.invoices.all|first %}
+        <div class='group bg-white rounded-2xl p-5 border border-gray-100 hover:border-blue-200 hover:shadow-lg transition-all duration-200 flex items-center gap-6'>
+
+            <!-- Date badge -->
+            <div class='shrink-0 w-12 h-14 bg-blue-50 rounded-xl flex flex-col items-center justify-center border border-blue-100'>
+                <span class='text-[10px] font-bold text-blue-400 uppercase'>{{ o.date|date:"M" }}</span>
+                <span class='text-xl font-bold text-blue-900'>{{ o.date|date:"d" }}</span>
             </div>
 
-            <div class='w-32'>
+            <!-- Receipt ID + supplier -->
+            <div class='flex-1 min-w-0'>
+                <a href='{% url "purchase_receipt_detail" o.pk %}' class='text-lg font-bold text-gray-900 hover:text-blue-600 transition-colors'>PR #{{ o.pk }}</a>
+                <p class='text-sm text-gray-500 mt-0.5 truncate'>{{ o.supplier.name }}</p>
+            </div>
+
+            <!-- PO reference -->
+            {% if o.purchase_order %}
+            <div class='shrink-0 text-xs font-bold text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100'>PO-{{ o.purchase_order.pk }}</div>
+            {% endif %}
+
+            <!-- Billing status chip (only for submitted receipts) -->
+            {% if o.status == 'SUBMITTED' %}
+            <div class='shrink-0'>
+                {% if ghost and ghost.status == 'SUBMITTED' %}
+                <span class='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200'>
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                    Billed
+                </span>
+                {% else %}
+                <span class='inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200'>
+                    <span class='w-1.5 h-1.5 rounded-full bg-amber-500 inline-block'></span>
+                    Unbilled
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Document status badge -->
+            <div class='shrink-0'>
                 {% include 'components/document_status_badge.html' with doc_status=o.status %}
             </div>
-            <a href='{% url "purchase_receipt_detail" o.pk %}' class='text-sm text-blue-600 bg-blue-50 px-4 py-2 rounded-xl font-bold hover:bg-blue-100 transition-colors'>View</a>
+
+            <!-- View action -->
+            <a href='{% url "purchase_receipt_detail" o.pk %}' class='shrink-0 text-sm text-blue-600 bg-blue-50 px-4 py-2 rounded-xl font-bold hover:bg-blue-100 transition-colors'>View &rarr;</a>
         </div>
+        {% endwith %}
         {% empty %}
-        <p class='text-gray-500'>No sales receipts found.</p>
+        <div class='text-center py-16 text-gray-400'>
+            <p class='font-bold text-lg'>No Purchase Receipts yet.</p>
+            <p class='text-sm mt-1'>Click &ldquo;+ New Receipt&rdquo; to record incoming stock without creating an invoice first.</p>
+        </div>
         {% endfor %}
     </div>
 </div>

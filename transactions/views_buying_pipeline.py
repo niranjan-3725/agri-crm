@@ -1,14 +1,18 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.db import transaction
+from django.db.models import Prefetch
 from django.contrib import messages
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 import json
 
 from .models import (
-    Supplier, Batch, PurchaseOrder, PurchaseOrderItem, PurchaseReceipt, PurchaseReceiptItem
+    Supplier, Batch, PurchaseOrder, PurchaseOrderItem, PurchaseReceipt, PurchaseReceiptItem,
+    PurchaseInvoice,
 )
+from accounting.models import GLEntry
+from inventory.models import StockMovement
 
 # --- PURCHASE ORDER VIEWS ---
 
@@ -94,19 +98,44 @@ def cancel_purchase_order(request, pk):
 # --- PURCHASE RECEIPT VIEWS ---
 
 def purchase_receipt_list(request):
-    receipts = PurchaseReceipt.objects.all().order_by('-date', '-id')
+    receipts = PurchaseReceipt.objects.prefetch_related(
+        Prefetch('invoices', queryset=PurchaseInvoice.objects.order_by('-id'))
+    ).order_by('-date', '-id')
     return render(request, 'transactions/purchase_receipt_list.html', {'receipts': receipts})
 
 
 def purchase_receipt_detail(request, pk):
-    from .models import PurchaseInvoice
     receipt = get_object_or_404(PurchaseReceipt, pk=pk)
     ghost_invoice = receipt.invoices.filter(status='DRAFT').first()
+
+    gl_entries = list(GLEntry.objects.filter(
+        reference_type='PurchaseReceipt', reference_id=pk
+    ).select_related('account').order_by('id'))
+    if receipt.status == 'CANCELLED':
+        gl_entries += list(GLEntry.objects.filter(
+            reference_type='PurchaseReceiptCancel', reference_id=pk
+        ).select_related('account').order_by('id'))
+
+    stock_movements = list(StockMovement.objects.filter(
+        reference_document_type='PurchaseReceipt', reference_document_id=pk
+    ).select_related('batch__product', 'warehouse').order_by('id'))
+    if receipt.status == 'CANCELLED':
+        stock_movements += list(StockMovement.objects.filter(
+            reference_document_type='PurchaseReceiptCancel', reference_document_id=pk
+        ).select_related('batch__product', 'warehouse').order_by('id'))
+
+    gl_total_debit = sum(e.debit for e in gl_entries)
+    gl_total_credit = sum(e.credit for e in gl_entries)
+
     return render(request, 'transactions/purchase_receipt_detail.html', {
         'receipt': receipt,
         'ghost_invoice': ghost_invoice,
         'submit_url': reverse('submit_purchase_receipt', kwargs={'pk': pk}),
         'cancel_url': reverse('cancel_purchase_receipt', kwargs={'pk': pk}),
+        'gl_entries': gl_entries,
+        'stock_movements': stock_movements,
+        'gl_total_debit': gl_total_debit,
+        'gl_total_credit': gl_total_credit,
     })
 
 

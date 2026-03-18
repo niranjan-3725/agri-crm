@@ -10,6 +10,12 @@
     </span>
     Draft
 </span>
+{% elif doc_status == 'RECEIVED' %}
+<span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide
+             bg-amber-50 text-amber-700 border border-amber-200">
+    <span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+    Goods Received
+</span>
 {% elif doc_status == 'SUBMITTED' %}
 <span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold tracking-wide
              bg-emerald-50 text-emerald-700 border border-emerald-200">

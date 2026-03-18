@@ -87,6 +87,8 @@
                 <span class="font-medium text-[15px]">Purchase</span>
             </a>
 
+            {# Sprint 23: Purchase Receipts sidebar link removed — Hybrid pattern replaces standalone receipt module #}
+
             <!-- Payables -->
             <a href="{% url 'accounts_payable' %}"
                 :class="currentPath.includes('/payable') ? 'bg-gray-900 text-white shadow-lg shadow-gray-900/10' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'"

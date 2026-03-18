@@ -22,7 +22,7 @@ EVERY change to stock MUST go through ``process_stock_movement()`` so that:
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
-from django.db.models import F, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, Sum
 
 from .models import Batch, StockBin, StockMovement, StockReconciliation, Warehouse
 
@@ -90,6 +90,40 @@ def _recalculate_moving_average(product, incoming_qty, incoming_price):
     product.save(update_fields=['moving_average_price'])
 
     return new_avg
+
+
+def recalculate_product_map_from_batches(product):
+    """Sprint 25: Full MAP recalculation from per-batch purchase_price × current_quantity.
+
+    Called after landed-cost distribution in ``finalize_purchase_invoice`` to correct
+    the MAP that was initially posted with rate=0 during Stage 1 (physical-only receipt).
+
+    Unlike ``_recalculate_moving_average`` (which applies a single inward delta), this
+    recomputes MAP from scratch using all active batches — it is safe to call after
+    ``batch.purchase_price`` has been updated with the final landed rate.
+
+    The ``product`` **must** already be locked via ``select_for_update()`` before calling.
+    """
+    totals = (
+        Batch.objects.filter(product=product, current_quantity__gt=0)
+        .aggregate(
+            total_qty=Sum('current_quantity'),
+            total_value=Sum(
+                ExpressionWrapper(
+                    F('current_quantity') * F('purchase_price'),
+                    output_field=DecimalField(max_digits=18, decimal_places=4),
+                )
+            ),
+        )
+    )
+    total_qty = totals['total_qty'] or 0
+    total_value = totals['total_value'] or Decimal('0')
+
+    if total_qty > 0:
+        product.moving_average_price = (
+            total_value / Decimal(total_qty)
+        ).quantize(Decimal('0.0001'))
+        product.save(update_fields=['moving_average_price'])
 
 
 def process_stock_movement(
