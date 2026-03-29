@@ -7,7 +7,7 @@
 
     document.addEventListener('alpine:init', () => {
         Alpine.data('purchaseLogic', () => ({
-            rows: {% if existing_items_json %}{{ existing_items_json| safe }}{% else %}[{ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0, touched: {} }]{% endif %},
+            rows: {% if existing_items_json %}{{ existing_items_json| safe }}{% else %}[{ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0, touched: {}, prefilled: {}, consultFilled: {} }]{% endif %},
             loading_charges: {% if invoice and invoice.loading_charges %}{{ invoice.loading_charges }}{% else %}0{% endif %},
             discount: {% if invoice and invoice.additional_discount %}{{ invoice.additional_discount }}{% else %}0{% endif %},
             payment_status: '{% if invoice and invoice.payment_status %}{{ invoice.payment_status }}{% else %}UNPAID{% endif %}',
@@ -23,6 +23,52 @@
             submitAttempted: false,
 
             showFinancials: false,
+
+            // Triad Match Consultation Modal
+            showConsultModal: false,
+            consultRow: null,
+            consultData: null,
+
+            openConsult(row, data) {
+                this.consultRow = row;
+                this.consultData = data;
+                this.showConsultModal = true;
+            },
+
+            useConsultPricing() {
+                const row = this.consultRow;
+                const data = this.consultData;
+                if (!row || !data) return;
+                // Amber glow (consultFilled) — these came from a previous batch, not the exact record
+                row.consultFilled = row.consultFilled || {};
+                if (!row.rate)           { row.rate           = data.basic_rate;    row.consultFilled.rate          = true; }
+                if (!row.mrp)            { row.mrp            = data.mrp;           row.consultFilled.mrp           = true; }
+                if (!row.margin_percent) { row.margin_percent = data.margin;        row.consultFilled.margin        = true; }
+                if (!row.selling_price)  { row.selling_price  = data.selling_price; row.consultFilled.selling_price = true; }
+                // Deliberately leave mfg_date / expiry_date blank — unique to the new batch
+                this.calculateRow(row);
+                this.showConsultModal = false;
+                this.consultRow  = null;
+                this.consultData = null;
+            },
+
+            dismissConsult() {
+                // Atomic Clear — "Enter New" wipes ALL fields to prevent stale-data hangover
+                const row = this.consultRow;
+                if (row) {
+                    row.mfg_date     = '';
+                    row.expiry_date  = '';
+                    row.mrp          = '';
+                    row.rate         = '';
+                    row.margin_percent  = '';
+                    row.selling_price   = '';
+                    row.prefilled    = {};
+                    row.consultFilled = {};
+                }
+                this.showConsultModal = false;
+                this.consultRow  = null;
+                this.consultData = null;
+            },
 
             // ── Real-time touch tracking for header fields ──────────────
             supplierTouched: false,
@@ -142,7 +188,7 @@
             },
 
             addRow() {
-                this.rows.push({ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0, touched: {} });
+                this.rows.push({ id: ++rowIdCounter, product_id: '', product_name: '', searchResults: [], showDropdown: false, batch_number: '', mfg_date: '', expiry_date: '', size: '', unit: 'kg', qty: 1, mrp: '', selling_price: '', rate: '', net_cost: 0, margin_percent: '', product_tax_rate: 0, tax_amount: 0, total: 0, touched: {}, prefilled: {}, consultFilled: {} });
             },
 
             removeRow(index) {
@@ -173,6 +219,7 @@
                 row.showDropdown = false;
                 row.touched.product = true;
                 this.calculateRow(row);
+                // Triad guard: fetchPricing fires via @change on Batch/Size — not here
                 this.$nextTick(() => {
                     const batchInputs = document.querySelectorAll('[name="batch_number[]"]');
                     if (batchInputs[rowIndex]) batchInputs[rowIndex].focus();
@@ -214,6 +261,39 @@
                 } else {
                     row.margin_percent = 0;
                 }
+            },
+
+            async fetchPricing(row) {
+                // Triad State-Guard: only fire when Product + Batch + Size are ALL present
+                if (!row.product_id || !String(row.batch_number).trim() || !String(row.size).trim()) return;
+                const params = new URLSearchParams({
+                    product_id:   row.product_id,
+                    batch_number: row.batch_number,
+                    size:         row.size,
+                });
+                try {
+                    const res = await fetch(`/purchases/fetch-pricing/?${params}`);
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (!data.found) return;
+                    // Consultation Modal: ONLY for truly new batches (not in DB) with historical data
+                    // batch_exists=false means the batch number has never been used before
+                    if (!data.batch_exists && data.source !== 'dates_only') {
+                        this.openConsult(row, data);
+                        return;
+                    }
+                    // Existing batch OR dates_only — silent prefill (blue glow)
+                    row.prefilled = row.prefilled || {};
+                    if (!row.mfg_date       && data.mfg_date)        { row.mfg_date       = data.mfg_date;       row.prefilled.mfg_date     = true; }
+                    if (!row.expiry_date    && data.expiry_date)      { row.expiry_date    = data.expiry_date;    row.prefilled.expiry_date  = true; }
+                    if (!row.mrp            && data.mrp)              { row.mrp            = data.mrp;            row.prefilled.mrp          = true; }
+                    // Financial fields: only prefill if value is non-zero (0 means never finalized)
+                    if (!row.rate           && data.basic_rate)       { row.rate           = data.basic_rate;     row.prefilled.rate         = true; }
+                    if (!row.margin_percent && data.margin)           { row.margin_percent = data.margin;         row.prefilled.margin       = true; }
+                    if (!row.selling_price  && data.selling_price)    { row.selling_price  = data.selling_price;  row.prefilled.selling_price = true; }
+                    if (data.tax_percentage && !row.product_tax_rate) { row.product_tax_rate = data.tax_percentage; }
+                    this.calculateRow(row);
+                } catch(e) { /* silently fail — pricing is a hint, not required */ }
             },
 
             formatCurrency(value) {
@@ -549,6 +629,7 @@
                                         <label class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Batch</label>
                                         <div class="relative h-12">
                                             <input type="text" x-model="row.batch_number" name="batch_number[]"
+                                                @change="fetchPricing(row)"
                                                 class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-400/40 text-gray-700"
                                                 placeholder="Batch No">
                                         </div>
@@ -566,6 +647,7 @@
                                                 : 'border border-transparent bg-gray-50/50 hover:bg-white hover:border-gray-200 focus-within:border-blue-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-blue-100'">
                                             <input type="number" step="0.001" min="0.001" x-model="row.size" name="size[]"
                                                 @blur="row.touched.size = true"
+                                                @change="fetchPricing(row)"
                                                 class="w-full pl-3 text-sm font-semibold text-gray-700 outline-none bg-transparent"
                                                 placeholder="Size">
                                             <div class="w-px bg-gray-200 my-2"></div>
@@ -623,7 +705,9 @@
                                             class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-gray-700"
                                             :class="(row.touched.mfgDate || submitAttempted) && (rowErr(row).mfgDate || rowErr(row).mfgFuture)
                                                 ? 'border-red-400 bg-red-50/50 focus:border-red-400'
-                                                : 'bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'">
+                                                : row.prefilled && row.prefilled.mfg_date
+                                                    ? 'border-blue-300 bg-blue-50/30 ring-2 ring-blue-400 focus:border-blue-400'
+                                                    : 'bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'">
                                     </div>
                                     <!-- Inline error: shows most relevant message -->
                                     <p class="field-error-msg text-[10px] font-semibold text-red-500 flex items-center gap-1 pl-1"
@@ -643,7 +727,9 @@
                                             class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-gray-700"
                                             :class="(row.touched.expDate || submitAttempted) && (rowErr(row).expDate || rowErr(row).expBeforeMfg)
                                                 ? 'border-red-400 bg-red-50/50 focus:border-red-400'
-                                                : 'bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'">
+                                                : row.prefilled && row.prefilled.expiry_date
+                                                    ? 'border-blue-300 bg-blue-50/30 ring-2 ring-blue-400 focus:border-blue-400'
+                                                    : 'bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'">
                                     </div>
                                     <!-- Inline error -->
                                     <p class="field-error-msg text-[10px] font-semibold text-red-500 flex items-center gap-1 pl-1"
@@ -660,9 +746,12 @@
                                     <div class="relative h-12">
                                         <input type="number" step="0.01" min="0" x-model="row.mrp" name="mrp[]"
                                             @blur="row.touched.mrp = true"
+                                            @input="row.prefilled && (row.prefilled.mrp = false); row.consultFilled && (row.consultFilled.mrp = false)"
                                             class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-gray-700"
                                             :class="(row.touched.mrp || submitAttempted) && (rowErr(row).mrpEmpty || rowErr(row).mrpVsRate || rowErr(row).mrpVsSell)
                                                 ? 'border-red-400 bg-red-50/50 focus:border-red-400'
+                                                : row.consultFilled && row.consultFilled.mrp ? 'ring-2 ring-amber-400 border-amber-300 bg-transparent hover:bg-white hover:border-amber-300 focus:bg-white focus:border-amber-400/40'
+                                                : row.prefilled && row.prefilled.mrp ? 'ring-2 ring-blue-400 bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'
                                                 : 'bg-transparent hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'"
                                             placeholder="0.00">
                                     </div>
@@ -719,12 +808,14 @@
                                             :class="(row.touched.rate || submitAttempted) && (rowErr(row).rateEmpty || rowErr(row).rateVsMrp) ? 'text-red-500' : 'text-gray-400 group-focus-within/input:text-blue-500'">Basic Rate</label>
                                         <div class="relative h-12">
                                             <input type="number" step="0.01" x-model="row.rate"
-                                                @input="calculateRow(row); calculateSelling(row)"
+                                                @input="calculateRow(row); calculateSelling(row); row.prefilled && (row.prefilled.rate = false); row.consultFilled && (row.consultFilled.rate = false)"
                                                 @blur="row.touched.rate = true"
                                                 name="purchase_rate[]"
                                                 class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-gray-700"
                                                 :class="(row.touched.rate || submitAttempted) && (rowErr(row).rateEmpty || rowErr(row).rateVsMrp)
                                                     ? 'border-red-400 bg-red-50/50 focus:border-red-400'
+                                                    : row.consultFilled && row.consultFilled.rate ? 'ring-2 ring-amber-400 border-amber-300 bg-gray-50/50 hover:bg-white hover:border-amber-300 focus:bg-white focus:border-amber-400/40'
+                                                    : row.prefilled && row.prefilled.rate ? 'ring-2 ring-blue-400 border-transparent bg-gray-50/50 hover:bg-white hover:border-gray-200 focus:bg-white focus:border-blue-400/40'
                                                     : 'border-transparent bg-gray-50/50 hover:bg-white hover:border-gray-200 focus:bg-white focus:border-blue-400/40'"
                                                 placeholder="0.00" min="0">
                                         </div>
@@ -760,8 +851,9 @@
                                         <label class="text-[10px] font-bold uppercase tracking-widest pl-1 text-gray-400 group-focus-within/input:text-blue-500 transition-colors">Margin %</label>
                                         <div class="relative h-12">
                                             <input type="number" step="0.01" x-model="row.margin_percent"
-                                                @input="calculateSelling(row)" name="margin[]"
+                                                @input="calculateSelling(row); row.prefilled && (row.prefilled.margin = false); row.consultFilled && (row.consultFilled.margin = false)" name="margin[]"
                                                 class="w-full h-full bg-gray-50/50 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 focus:bg-white focus:border-blue-400/40 text-gray-700 pl-8"
+                                                :class="row.consultFilled && row.consultFilled.margin ? 'ring-2 ring-amber-400 border-amber-300' : row.prefilled && row.prefilled.margin ? 'ring-2 ring-blue-400' : ''"
                                                 placeholder="0">
                                             <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
                                                 width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -781,12 +873,14 @@
                                             :class="(row.touched.sell || submitAttempted) && (rowErr(row).sellEmpty || rowErr(row).sellVsMrp || rowErr(row).sellVsRate) ? 'text-red-500' : 'text-gray-400 group-focus-within/input:text-blue-500'">Sell Price</label>
                                         <div class="relative h-12">
                                             <input type="number" step="0.01" x-model="row.selling_price"
-                                                @input="calculateMargin(row)"
+                                                @input="calculateMargin(row); row.prefilled && (row.prefilled.selling_price = false); row.consultFilled && (row.consultFilled.selling_price = false)"
                                                 @blur="row.touched.sell = true"
                                                 name="selling_price[]"
                                                 class="w-full h-full border rounded-xl px-3 text-sm font-semibold outline-none transition-all duration-200 text-gray-700"
                                                 :class="(row.touched.sell || submitAttempted) && (rowErr(row).sellEmpty || rowErr(row).sellVsMrp || rowErr(row).sellVsRate)
                                                     ? 'border-red-400 bg-red-50/50 focus:border-red-400'
+                                                    : row.consultFilled && row.consultFilled.selling_price ? 'ring-2 ring-amber-400 border-amber-300 bg-gray-50/50 hover:bg-white hover:border-amber-300 focus:bg-white focus:border-amber-400/40'
+                                                    : row.prefilled && row.prefilled.selling_price ? 'ring-2 ring-blue-400 bg-gray-50/50 hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'
                                                     : 'bg-gray-50/50 hover:bg-white border-transparent hover:border-gray-200 focus:bg-white focus:border-blue-400/40'"
                                                 placeholder="0.00">
                                             <div class="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-300 pointer-events-none">INR</div>
@@ -984,6 +1078,56 @@
 
         </div>
     </aside>
+
+    {# Sprint 26: Triad Match Consultation Modal #}
+    <div x-show="showConsultModal" x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" style="display:none;">
+        <div x-show="showConsultModal" x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" class="bg-white rounded-3xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div class="px-8 py-6 bg-amber-50 border-b border-amber-200">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center shrink-0">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-amber-900 text-base">New Batch Detected</h3>
+                        <p class="text-amber-700 text-xs mt-0.5">We found previous pricing for this product</p>
+                    </div>
+                </div>
+            </div>
+            <div class="px-8 py-6">
+                <p class="text-sm text-gray-600 mb-5">Last recorded financials for <strong x-text="consultRow && consultRow.product_name"></strong>:</p>
+                <template x-if="consultData">
+                    <div class="grid grid-cols-2 gap-3 mb-6">
+                        <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Basic Rate</p>
+                            <p class="font-bold text-gray-900">₹<span x-text="consultData && Number(consultData.basic_rate).toFixed(2)"></span></p>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">MRP</p>
+                            <p class="font-bold text-gray-900">₹<span x-text="consultData && Number(consultData.mrp).toFixed(2)"></span></p>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Margin %</p>
+                            <p class="font-bold text-gray-900"><span x-text="consultData && Number(consultData.margin).toFixed(2)"></span>%</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                            <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Sell Price</p>
+                            <p class="font-bold text-gray-900">₹<span x-text="consultData && Number(consultData.selling_price).toFixed(2)"></span></p>
+                        </div>
+                    </div>
+                </template>
+                <p class="text-xs text-gray-400 mb-5">Use these values as a starting point, or enter new rates manually.</p>
+                <div class="flex gap-3">
+                    <button type="button" @click="useConsultPricing()" class="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                        Use Previous Rates
+                    </button>
+                    <button type="button" @click="dismissConsult()" class="flex-1 py-3 rounded-xl font-bold text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors">
+                        Enter New Rates
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── Supplier Modal ──────────────────────────────────────────────── -->
     <div x-show="showSupplierModal"

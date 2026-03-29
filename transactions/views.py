@@ -1063,16 +1063,17 @@ def purchase_edit(request, pk):
                     unit_val = units[i] if i < len(units) else 'kg'
                     mrp = float(mrps[i]) if i < len(mrps) and mrps[i] else 0
                     rate_pre_tax = float(rates[i]) if rates[i] else 0
-                    sell_price = float(selling_prices[i]) if i < len(selling_prices) and selling_prices[i] else mrp
+                    # Sprint 28: default to 0, NOT mrp — sovereignty invariant
+                    sell_price = float(selling_prices[i]) if i < len(selling_prices) and selling_prices[i] else 0
                     margin_val = float(margins[i]) if i < len(margins) and margins[i] else 0
                     qty = int(quantities[i]) if quantities[i] else 0
-                    
+
                     tax_rate = float(product.category.total_tax) if product.category else 0
                     tax_amount_per_unit = rate_pre_tax * (tax_rate / 100)
                     total_tax_amount = tax_amount_per_unit * qty
                     net_cost_per_unit = rate_pre_tax + tax_amount_per_unit
                     total_line_amount = net_cost_per_unit * qty
-                    
+
                     batch, created = Batch.objects.get_or_create(
                         product=product,
                         batch_number=batch_number,
@@ -1083,18 +1084,20 @@ def purchase_edit(request, pk):
                             'unit': unit_val,
                             'purchase_price': rate_pre_tax,  # Sprint 16: Tax-exclusive valuation
                             'mrp': mrp,
-                            'base_selling_price': sell_price,
+                            'base_selling_price': sell_price or mrp,  # new batch: use mrp as initial ceiling only
                             'current_quantity': 0
                         }
                     )
-                    
+
                     if not created:
                         batch.manufacturing_date = mfg_date or batch.manufacturing_date
                         batch.expiry_date = expiry or batch.expiry_date
                         batch.size = size_val or batch.size
                         batch.unit = unit_val or batch.unit
                         batch.mrp = mrp or batch.mrp
-                        batch.base_selling_price = sell_price or batch.base_selling_price
+                        # Sprint 28: Only overwrite base_selling_price if user entered a real value
+                        if sell_price:
+                            batch.base_selling_price = sell_price
                         batch.purchase_price = rate_pre_tax  # Sprint 16: Tax-exclusive valuation
                         batch.save()
                     
@@ -1287,7 +1290,8 @@ def create_purchase(request):
                     mrp = float(mrps[i]) if mrps[i] else 0
                     rate_pre_tax = float(purchase_rates[i]) if purchase_rates[i] else 0
                     qty = int(quantities[i]) if quantities[i] else 0
-                    sell_price = float(selling_prices[i]) if selling_prices[i] else mrp
+                    # Sprint 28: default to 0, NOT mrp — sovereignty invariant
+                    sell_price = float(selling_prices[i]) if selling_prices[i] else 0
                     margin_val = float(margins[i]) if i < len(margins) and margins[i] else 0
 
                     # ── Backend price integrity safety net ────────────────────
@@ -1339,7 +1343,9 @@ def create_purchase(request):
                         batch.size = size or batch.size
                         batch.unit = unit or batch.unit
                         batch.mrp = mrp or batch.mrp
-                        batch.base_selling_price = sell_price or batch.base_selling_price
+                        # Sprint 28: Only overwrite base_selling_price if user entered a real value
+                        if sell_price:
+                            batch.base_selling_price = sell_price
                         batch.purchase_price = rate_pre_tax  # Sprint 16: Tax-exclusive valuation
                         batch.save()
                     
@@ -2515,9 +2521,9 @@ def finalize_purchase_invoice(request, pk):
             invoice.loading_charges = Decimal(request.POST.get('loading_charges') or 0)
             invoice.additional_discount = Decimal(request.POST.get('discount') or 0)
 
-            # Update per-item rates
+            # Update per-item rates, selling price, and margin
             grand_total = Decimal('0')
-            items_list = list(invoice.items.select_related('batch__product__category').all())
+            items_list = list(invoice.items.select_related('batch__product__category', 'batch').all())
             for item in items_list:
                 rate_key = f'rate_{item.id}'
                 if rate_key in request.POST:
@@ -2529,6 +2535,31 @@ def finalize_purchase_invoice(request, pk):
                     item.tax_amount = (rate * tax_rate / 100 * item.quantity).quantize(Decimal('0.01'))
                     item.total_amount = (rate + rate * tax_rate / 100) * item.quantity
                     item.save(update_fields=['basic_rate', 'tax_amount', 'total_amount'])
+
+                # Sprint 28: Selling Price Sovereignty — read sell_price & margin from form.
+                # Only update if the user explicitly entered a non-zero value.
+                # NEVER fall back to MRP — that would be a silent overwrite.
+                sell_key   = f'selling_price_{item.id}'
+                margin_key = f'margin_{item.id}'
+                if sell_key in request.POST:
+                    raw_sell   = request.POST[sell_key].strip()
+                    raw_margin = request.POST.get(margin_key, '').strip()
+                    sell_price = Decimal(raw_sell)   if raw_sell   else Decimal('0')
+                    margin_val = Decimal(raw_margin) if raw_margin else Decimal('0')
+                    if sell_price > 0:
+                        # MRP ceiling check
+                        if item.batch.mrp and sell_price > item.batch.mrp:
+                            raise ValidationError(
+                                f"'{item.batch.product.name}': Selling Price "
+                                f"(₹{sell_price:.2f}) cannot exceed MRP (₹{item.batch.mrp:.2f})."
+                            )
+                        item.selling_price = sell_price
+                        item.profit_margin = margin_val
+                        item.save(update_fields=['selling_price', 'profit_margin'])
+                        # Sovereignty: batch.base_selling_price = user decision, not MRP
+                        item.batch.base_selling_price = sell_price
+                        item.batch.save(update_fields=['base_selling_price'])
+
                 grand_total += item.total_amount
 
             invoice.total_amount = grand_total + invoice.loading_charges - invoice.additional_discount
@@ -2578,3 +2609,94 @@ def finalize_purchase_invoice(request, pk):
     except Exception as e:
         messages.error(request, f"Finalization failed: {e}")
     return redirect('purchase_detail', pk=pk)
+
+
+def fetch_latest_pricing(request):
+    """Intelligence Engine — auto-fill physical + financial fields from purchase history.
+
+    Two independent lookups:
+      A. Physical (dates/MRP): always from the exact Batch record if it exists in DB.
+      B. Financial (rate/margin/sell): from the most-recent FINALIZED PurchaseItem
+         (basic_rate > 0), searched in priority order:
+           1. Same batch_number
+           2. Same size
+           3. Any variant of this product
+
+    Returns JSON: {found, source, batch_exists, basic_rate, tax_percentage,
+                   margin, selling_price, mrp, mfg_date, expiry_date}
+
+    batch_exists=True  → JS silently prefills without showing consultation modal.
+    batch_exists=False → JS shows consultation modal for new batches.
+    """
+    from inventory.models import Batch as BatchModel
+
+    product_id   = request.GET.get('product_id', '').strip()
+    batch_number = request.GET.get('batch_number', '').strip()
+    size         = request.GET.get('size', '').strip()
+
+    if not product_id or not batch_number or not size:
+        return JsonResponse({'found': False})
+
+    # ── A. Physical lookup: exact Batch record ──────────────────────────────
+    exact_batch = BatchModel.objects.filter(
+        product_id=product_id,
+        batch_number=batch_number,
+    ).first()
+
+    def _dates(b):
+        return {
+            'mrp':         float(b.mrp or 0),
+            'mfg_date':    b.manufacturing_date.isoformat() if b.manufacturing_date else '',
+            'expiry_date': b.expiry_date.isoformat()        if b.expiry_date        else '',
+        }
+
+    # ── B. Financial lookup: ONLY finalized items (basic_rate > 0) ──────────
+    financial_qs = (
+        PurchaseItem.objects
+        .filter(batch__product_id=product_id, basic_rate__gt=0)
+        .select_related('batch__product__category')
+        .order_by('-invoice__date', '-id')
+    )
+
+    def _tax(item):
+        if item.batch and item.batch.product and item.batch.product.category:
+            return Decimal(str(item.batch.product.category.total_tax or 0))
+        return Decimal('0')
+
+    def _build(item, source):
+        physical = _dates(exact_batch) if exact_batch else _dates(item.batch)
+        return JsonResponse({
+            'found':          True,
+            'source':         source,
+            'batch_exists':   bool(exact_batch),
+            'basic_rate':     float(item.basic_rate),
+            'tax_percentage': float(_tax(item)),
+            'margin':         float(item.profit_margin or 0),
+            'selling_price':  float(item.selling_price or 0),
+            **physical,
+        })
+
+    # Priority 1: exact batch + has financial data
+    match = financial_qs.filter(batch__batch_number=batch_number).first()
+    if match:
+        return _build(match, 'batch')
+
+    # Priority 2: same size + has financial data
+    match = financial_qs.filter(batch__size=size).first()
+    if match:
+        return _build(match, 'size')
+
+    # Priority 3: any variant of this product + has financial data
+    match = financial_qs.first()
+    if match:
+        return _build(match, 'product')
+
+    # Priority 4: batch exists but NO financial history at all — dates/MRP only
+    if exact_batch:
+        return JsonResponse({
+            'found': True, 'source': 'dates_only', 'batch_exists': True,
+            'basic_rate': 0, 'tax_percentage': 0, 'margin': 0, 'selling_price': 0,
+            **_dates(exact_batch),
+        })
+
+    return JsonResponse({'found': False})

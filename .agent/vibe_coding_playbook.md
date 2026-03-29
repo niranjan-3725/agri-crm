@@ -1626,8 +1626,192 @@ Purchase entry forms use a **Physical-First, Progressive Disclosure** pattern. N
 
 ---
 
+## Rule 26 — The Data-Aware Prefill Invariant
+
+**[IMPLEMENTED 2026-03-19 — Sprint 26]**
+
+Purchase entry forms **auto-populate financial fields from purchase history** using a prioritised fallback chain. This eliminates re-keying and signals when data comes from history vs. user input.
+
+### The Intelligence Engine
+
+**Endpoint:** `GET /purchases/fetch-pricing/?product_id=&batch_number=&size=`
+
+**Priority chain (highest to lowest):**
+1. Most-recent `PurchaseItem` for same `product_id + batch_number` — exact SKU match
+2. Most-recent `PurchaseItem` for same `product_id + size` — same product variant
+3. Most-recent `PurchaseItem` for same `product_id` — any variant of this product
+
+**Response fields:** `{found, source, basic_rate, tax_percentage, margin, selling_price, mrp}`
+
+### Trigger Points
+
+| Event | Action |
+|---|---|
+| User selects a product from the autocomplete | `fetchPricing(row)` fired in `selectProduct()` |
+| User changes batch number field (`@change`) | `fetchPricing(row)` re-fired |
+| User changes size field (`@change`) | `fetchPricing(row)` re-fired with new size |
+
+### Prefill Rules
+
+1. **Never overwrite user-entered values.** Prefill only fires if the field is currently empty (`!row.rate`, `!row.mrp`, etc.).
+2. **Blue Glow = "Validation Required."** Prefilled fields get `ring-2 ring-blue-400`. The glow clears on the first `@input` event from the user.
+3. **Tax rate is always live.** `product_tax_rate` is taken from the product's category (server-side) and is NOT stored in `row.prefilled` — it can't be overridden by history.
+4. **Silent failure.** If the endpoint is unavailable or returns `{found: false}`, the form behaves exactly as before — no errors shown.
+
+### Center Stage Financial Form (Page B — Detail)
+
+The `finalize_purchase_invoice` form lives in the **main content area**, not the sidebar, when `status == 'RECEIVED'`. Layout:
+
+| Column | Field |
+|---|---|
+| Product | Name + Batch |
+| Qty | Read-only |
+| Basic Rate | Editable `<input>` |
+| Tax % | Read-only (from category) |
+| Hamali/Unit | Computed from Total Loading ÷ Total Qty |
+| Margin % | Editable, computes Sell Price |
+| Sell Price | Editable, computes Margin % — turns **RED** if < net cost |
+
+### Margin Guard
+
+Alpine.js `isNegativeMargin` computed: `sell > 0 && sell < netCost`.
+When true: sell price input gets `ring-2 ring-red-400 border-red-300` + "⚠ Margin negative" warning.
+`netCost = rate × (1 + tax/100) + hamali_per_unit`
+
+### Triad Match Consultation Pattern (Sprint 27 addition)
+
+When `source != 'batch'` (i.e. pricing came from product/size history, not the exact batch), the user is presenting a **new batch for a known product**. In this case:
+- Do **not** silently prefill — instead open the **Consultation Modal**.
+- The modal shows "Last Recorded Financials" with the 4 key fields (Rate, MRP, Margin, Sell Price).
+- Two buttons: **[ Use Previous Rates ]** (calls `useConsultPricing()`) and **[ Enter New Rates ]** (calls `dismissConsult()`, leaves fields blank).
+- `useConsultPricing()` applies the same prefill logic as a silent match (only empty fields, blue glow).
+- If `source == 'batch'` (exact batch history found): always silent prefill, no modal.
+
+**Future modules (Sales Returns, Quotations) must use this same consultation pattern** whenever historical data exists but the current document is a new variant.
+
+### Anti-Patterns
+- **Never** pre-fill if the field already has a user value.
+- **Never** show a red validation error when pricing history isn't found — just leave blank.
+- **Never** hard-code tax rates in JS — always read from the product's category via the server.
+- **Never** put the finalization form in a sidebar for RECEIVED invoices — it belongs on center stage.
+- **Never** silently overwrite rates for a new batch — always ask via the consultation modal.
+
+---
+
+## Rule 27: The Atomic Clear Invariant
+
+**Context:** When a user selects a new batch for a known product, the Consultation Modal shows last-recorded financials. If the user clicks **[ Enter New Rates ]**, ALL pre-filled or stale fields must be wiped atomically — zero residue.
+
+### State Machine
+
+```
+Triad complete (Product + Batch + Size)
+    │
+    ├─ source == 'batch' (exact match found)
+    │       → Silent Prefill (blue glow ring-blue-400)
+    │       → Fill: mfg_date, expiry_date, mrp, rate, margin, sell_price
+    │
+    └─ source != 'batch' (new batch for known product)
+            → Open Consultation Modal
+                │
+                ├─ [ Use Previous Rates ] → useConsultPricing()
+                │       → Fill: mrp, rate, margin, sell_price (amber glow ring-amber-400)
+                │       → Leave mfg_date / expiry_date BLANK (unique to new batch)
+                │
+                └─ [ Enter New Rates ] → dismissConsult()  ← THE ATOMIC CLEAR
+                        → Wipe: mfg_date, expiry_date, mrp, rate, margin, sell_price
+                        → Reset: row.prefilled = {}, row.consultFilled = {}
+                        → User starts from a 100% clean slate
+```
+
+### Implementation Rules
+- `row.prefilled.FIELD = true` → blue glow (`ring-2 ring-blue-400`) — exact batch history
+- `row.consultFilled.FIELD = true` → amber glow (`ring-2 ring-amber-400`) — consulted from previous batch
+- Glow clears on `@input` — clear BOTH `row.prefilled.FIELD` AND `row.consultFilled.FIELD`
+- `mfg_date` / `expiry_date` are NEVER filled by the consultation path — they are batch-unique
+- Backend sends `mfg_date` + `expiry_date` in `_build_response` for exact batch matches only
+
+### Anti-Patterns
+- **Never** leave stale financial data when the user clicks "Enter New" — atomic clear means everything goes
+- **Never** pre-fill mfg_date/expiry_date from a different batch's history — dates are batch-unique
+- **Never** use the same `prefilled` tracker for both silent prefill and consultation prefill — they need separate glows
+
+---
+
+## Rule 28: Selling Price Sovereignty
+
+**Invariant:** `batch.base_selling_price` is a **user-defined business decision**. It must NEVER be silently overwritten by MRP at any stage of the document lifecycle.
+
+### The Bug Pattern (Never Repeat)
+```python
+# ❌ WRONG — silently overwrites user decision with MRP when form field is empty
+sell_price = float(selling_prices[i]) if selling_prices[i] else mrp
+batch.base_selling_price = sell_price or batch.base_selling_price
+```
+
+### The Fix Pattern
+```python
+# ✅ CORRECT — default to 0, only update if user entered a real value
+sell_price = float(selling_prices[i]) if selling_prices[i] else 0
+if sell_price:
+    batch.base_selling_price = sell_price
+# If sell_price == 0: leave batch.base_selling_price untouched
+```
+
+### The Three Code Paths to Guard
+| View | Location | Guard Applied |
+|------|----------|---------------|
+| `create_purchase` (standard form) | `views.py` ~line 1066 | `else 0` not `else mrp` |
+| `create_purchase` (buying pipeline) | `views.py` ~line 1290 | `else 0` not `else mrp` |
+| `finalize_purchase_invoice` (Stage 2) | `views.py` ~line 2520 | reads `selling_price_{id}`, MRP ceiling check, then sets batch |
+
+### finalize_purchase_invoice Sovereignty Block
+When processing Stage 2 (RECEIVED → SUBMITTED):
+1. Read `selling_price_{item.id}` and `margin_{item.id}` from POST
+2. If `sell_price > 0`: validate `sell_price <= batch.mrp`, then save to `item.selling_price`, `item.profit_margin`, `batch.base_selling_price`
+3. If `sell_price == 0`: **do nothing** — leave existing value untouched
+
+### MRP vs Selling Price Distinction
+| Field | Location | Meaning |
+|-------|----------|---------|
+| `Batch.mrp` | inventory/models.py | Maximum Retail Price — the ceiling, never the actual price |
+| `Batch.base_selling_price` | inventory/models.py | Actual price decision — set by user, not by system |
+| `PurchaseItem.selling_price` | transactions/models.py | Item-level price on this specific invoice |
+
+### Validation Invariant
+- `selling_price ≤ MRP` — enforced at `finalize_purchase_invoice` (ValidationError if violated)
+- `selling_price ≥ basic_rate` — enforced in buying pipeline safety net (Path 2 line ~1306)
+
+---
+
 ## References
 
 - **Generic Refactor Framework** — See `.agent/AgriCRM_Generic_Refactor_Framework.md` for reusable patterns (Sales, Inventory, Master Data modules)
 - **Audit Script** — `C:\agri_crm\audit_gl_reconciliation.py` (read-only; run after every sprint)
-- **Last Updated** — 2026-03-18 (Sprint 25: Linear Narrative UI — Physical-First form, Conditional UniqueConstraint, Landed Cost Distribution)
+- **Last Updated** — 2026-03-22 (Sprint 29: Dashboard Intelligence Hub + Rule 29)
+
+---
+
+## Rule 29: Dashboard Data Consistency
+
+All numbers on the dashboard must reconcile perfectly with the detailed ledger. A discrepancy is a bug, not an approximation.
+
+### Authoritative Sources (Never Deviate)
+
+| Metric | Source | Query |
+|--------|--------|-------|
+| Revenue | `SalesInvoice.grand_total` | `filter(status='ACTIVE', date=today)` |
+| COGS / Profit | `SalesItem.quantity × Batch.purchase_price` | `batch__purchase_price` = landed cost post-hamali (Sprint 45) |
+| SRNB Balance | `GLEntry` | `filter(account__name='Stock Received But Not Billed')` — cr minus dr |
+| Pending count | `PurchaseInvoice` | `filter(status='RECEIVED').count()` |
+| Low Stock | `Batch` | `current_quantity__lt=10, is_active=True` (no min_stock_level field) |
+| Dead Stock | `Batch` excluding `StockMovement` | outward movements (`quantity__lt=0`) in last 60 days |
+
+### Critical Invariants
+- **SRNB balance must be queried from GLEntry**, not from `PurchaseInvoice.total_amount`. Un-finalized physical-first invoices have `total_amount=0` — the GL is always authoritative.
+- **SalesInvoice status is `'ACTIVE'`**, not `'SUBMITTED'`. Using wrong status = silent zero.
+- **`Batch.purchase_price` = landed cost** (updated by `finalize_purchase_invoice` with hamali distribution). Never use a fixed purchase price for profit calculation.
+- **Profit = Revenue − COGS**, where COGS = `SUM(qty × batch.purchase_price)` per SalesItem. Tax is included in `total_amount` (revenue) but NOT in `purchase_price` (cost) — this is correct because tax is a pass-through.
+
+### Chart.js Isolation
+Load Chart.js **only in the dashboard template**, never in `base.html`. Keeps all other pages free of the 60KB library.

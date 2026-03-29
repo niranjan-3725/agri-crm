@@ -200,6 +200,117 @@
             {% endfor %}
         </div>
 
+        {# Sprint 25: Center Stage Financial Finalization — RECEIVED invoices only #}
+        {% if invoice.status == 'RECEIVED' %}
+        <div class="mt-10" id="financial-finalization" x-data="{ finOpen: true }">
+            <button @click="finOpen = !finOpen" class="w-full flex items-center justify-between px-6 py-4 bg-amber-50 border-2 border-amber-300 rounded-2xl mb-4 group hover:bg-amber-100 transition-colors">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-amber-500 rounded-xl flex items-center justify-center shrink-0">
+                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <div class="text-left">
+                        <p class="font-bold text-amber-900 text-base">Stage 2 — Financial Finalization</p>
+                        <p class="text-amber-700 text-xs">Enter rates, taxes &amp; landed cost to clear SRNB and post AP</p>
+                    </div>
+                </div>
+                <svg class="w-5 h-5 text-amber-600 transition-transform" :class="finOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+
+            <div x-show="finOpen" x-transition>
+                <form method="post" action="{{ finalize_url }}" x-data="finForm()" x-init="init()" class="bg-white rounded-[2rem] border border-amber-200 shadow-sm overflow-hidden">
+
+                    {# Header inputs: Invoice Number + Payment Status #}
+                    <div class="p-8 border-b border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Supplier Invoice No. <span class="text-red-500">*</span></label>
+                            <input type="text" name="invoice_number" value="{{ invoice.invoice_number|default:'' }}" required placeholder="e.g. INV-2024-001" class="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Payment Status</label>
+                            <select name="payment_status" class="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <option value="UNPAID" {% if invoice.payment_status == 'UNPAID' %}selected{% endif %}>Unpaid</option>
+                                <option value="PARTIAL" {% if invoice.payment_status == 'PARTIAL' %}selected{% endif %}>Partially Paid</option>
+                                <option value="PAID" {% if invoice.payment_status == 'PAID' %}selected{% endif %}>Fully Paid</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {% csrf_token %}
+
+                    {# Full-width per-item financial table #}
+                    <div class="p-8">
+                        <h4 class="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">Per-Item Rates &amp; Margins</h4>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b-2 border-gray-100">
+                                        <th class="text-left py-3 px-3 font-bold text-xs text-gray-500 uppercase tracking-wider w-1/4">Product</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-gray-500 uppercase tracking-wider">Qty</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-amber-600 uppercase tracking-wider">Basic Rate ₹</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-gray-500 uppercase tracking-wider">Tax %</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-gray-500 uppercase tracking-wider">Hamali/Unit ₹</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-gray-500 uppercase tracking-wider">Margin %</th>
+                                        <th class="text-right py-3 px-3 font-bold text-xs text-green-600 uppercase tracking-wider">Sell Price ₹</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-50">
+                                    {% for item in items %}
+                                    <tr x-data="itemRow({{ item.id }}, {{ item.basic_rate|default:0 }}, {{ item.batch.product.category.total_tax|default:0 }}, {{ item.profit_margin|default:0 }}, {{ item.selling_price|default:0 }}, {{ item.quantity }})" class="group hover:bg-amber-50/30 transition-colors">
+                                        <td class="py-4 px-3">
+                                            <p class="font-bold text-gray-900 text-sm">{{ item.batch.product.name }}</p>
+                                            <p class="text-xs text-gray-400">Batch: {{ item.batch.batch_number }}</p>
+                                        </td>
+                                        <td class="py-4 px-3 text-right font-bold text-gray-700">{{ item.quantity }}</td>
+                                        <td class="py-4 px-3">
+                                            <input type="number" :name="'rate_' + itemId" step="0.01" min="0" x-model="rate" @input="calc(); notifyTotal()" placeholder="0.00" class="w-28 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-right font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 ml-auto block">
+                                        </td>
+                                        <td class="py-4 px-3 text-right text-gray-500 font-medium" x-text="taxPct + '%'"></td>
+                                        <td class="py-4 px-3 text-right text-gray-500 text-xs" x-text="hml > 0 ? '₹' + hml.toFixed(2) : '—'"></td>
+                                        <td class="py-4 px-3">
+                                            <input type="number" :name="'margin_' + itemId" step="0.01" x-model="margin" @input="calcFromMargin()" placeholder="0.00" class="w-20 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-right font-medium focus:outline-none focus:ring-2 focus:ring-blue-400 ml-auto block">
+                                        </td>
+                                        <td class="py-4 px-3">
+                                            <input type="number" :name="'selling_price_' + itemId" step="0.01" x-model="sellPrice" @input="calcFromSell()" placeholder="0.00" :class="isNegativeMargin ? 'ring-2 ring-red-400 border-red-300' : 'border-gray-200'" class="w-28 px-3 py-2 rounded-lg border bg-white text-sm text-right font-bold focus:outline-none focus:ring-2 focus:ring-green-400 ml-auto block">
+                                            <p x-show="isNegativeMargin" class="text-red-500 text-xs font-bold mt-1 text-right">⚠ Margin negative</p>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {# Landed Cost + Discount row #}
+                        <div class="mt-6 pt-6 border-t border-gray-100 grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Total Loading / Hamali ₹</label>
+                                <input type="number" name="loading_charges" step="0.01" min="0" x-model="$root.loadingCharges" @input="distributeHamali()" value="{{ invoice.loading_charges|default:'0' }}" class="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <p class="text-xs text-gray-400 mt-1">Auto-distributed across items by quantity</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Additional Discount ₹</label>
+                                <input type="number" name="discount" step="0.01" min="0" value="{{ invoice.additional_discount|default:'0' }}" class="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <div class="flex items-end">
+                                <div class="w-full p-4 bg-gray-50 rounded-xl border border-gray-100">
+                                    <p class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Est. Grand Total</p>
+                                    <p class="text-2xl font-black text-gray-900" x-text="'₹' + grandTotal.toLocaleString('en-IN', {minimumFractionDigits: 2})"></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Submit button #}
+                        <div class="mt-8">
+                            <button type="submit" class="w-full py-5 rounded-2xl font-bold text-base bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3 text-lg">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                                Finalize &amp; Submit Invoice — Clear SRNB, Post AP
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Payment History -->
         <div class="bg-gray-50/50 rounded-[2.5rem] p-8 mt-8 border border-gray-100">
             <h2 class="text-xl font-bold text-gray-900 mb-6">Payment History</h2>
@@ -384,83 +495,6 @@
                     </div>
                 </div>
 
-                {# Sprint 24: Financial Finalization Form — visible only for RECEIVED invoices #}
-                {% if invoice.status == 'RECEIVED' %}
-                <div class="mb-8" id="finalization-form">
-                    <h3 class="font-bold text-gray-900 mb-4 text-sm uppercase tracking-wider flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
-                        Stage 2 — Financial Details
-                    </h3>
-                    <form method="post" action="{{ finalize_url }}" class="space-y-4">
-                        {% csrf_token %}
-                        {# Invoice Number #}
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Supplier Invoice No. <span class="text-red-500">*</span></label>
-                            <input type="text" name="invoice_number" value="{{ invoice.invoice_number|default:'' }}"
-                                required placeholder="e.g. INV-2024-001"
-                                class="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent">
-                        </div>
-
-                        {# Per-item Rate Inputs #}
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Per-Item Rates (₹)</label>
-                            <div class="space-y-2">
-                                {% for item in items %}
-                                <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-xs font-bold text-gray-800 truncate">{{ item.batch.product.name }}</p>
-                                        <p class="text-xs text-gray-400">Qty: {{ item.quantity }}</p>
-                                    </div>
-                                    <div class="w-28 shrink-0">
-                                        <input type="number" name="rate_{{ item.id }}" step="0.01" min="0"
-                                            value="{{ item.basic_rate|default:'' }}"
-                                            placeholder="Rate"
-                                            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-right font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        {# Loading Charges + Discount #}
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Loading / Hamali</label>
-                                <input type="number" name="loading_charges" step="0.01" min="0"
-                                    value="{{ invoice.loading_charges|default:'0' }}"
-                                    class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Discount</label>
-                                <input type="number" name="discount" step="0.01" min="0"
-                                    value="{{ invoice.additional_discount|default:'0' }}"
-                                    class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
-                            </div>
-                        </div>
-
-                        {# Payment Status #}
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Payment Status</label>
-                            <select name="payment_status"
-                                class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400">
-                                <option value="UNPAID" {% if invoice.payment_status == 'UNPAID' %}selected{% endif %}>Unpaid</option>
-                                <option value="PARTIAL" {% if invoice.payment_status == 'PARTIAL' %}selected{% endif %}>Partially Paid</option>
-                                <option value="PAID" {% if invoice.payment_status == 'PAID' %}selected{% endif %}>Fully Paid</option>
-                            </select>
-                        </div>
-
-                        {# Submit Button #}
-                        <button type="submit"
-                            class="w-full py-4 rounded-2xl font-bold text-base bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
-                            </svg>
-                            Submit Invoice
-                        </button>
-                    </form>
-                </div>
-                {% endif %}
-
                 <!-- History -->
                 <div class="mb-8">
                     <h3 class="font-bold text-gray-900 mb-4 text-sm uppercase tracking-wider">History</h3>
@@ -556,5 +590,88 @@
     </div>
 </div>
 {% endif %}
+
+{# Sprint 26: Alpine.js — Reactive Grand Total via window events #}
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('finForm', () => ({
+        loadingCharges: {{ invoice.loading_charges|default:0 }},
+        itemQtys: { {% for item in items %}{{ item.id }}: {{ item.quantity }}{% if not forloop.last %}, {% endif %}{% endfor %} },
+        itemTotals: {},
+
+        init() {
+            // Listen for per-item total updates dispatched from itemRow children
+            window.addEventListener('item-total-updated', (e) => {
+                this.itemTotals = { ...this.itemTotals, [e.detail.id]: e.detail.total };
+            });
+        },
+
+        get grandTotal() {
+            // Fully reactive: driven by itemTotals object populated by itemRow events
+            const itemsSum = Object.values(this.itemTotals).reduce((a, b) => a + b, 0);
+            return itemsSum + (parseFloat(this.loadingCharges) || 0);
+        },
+
+        distributeHamali() {
+            const total = Object.values(this.itemQtys).reduce((a, b) => a + b, 0);
+            if (total <= 0) return;
+            const perUnit = (parseFloat(this.loadingCharges) || 0) / total;
+            this.$dispatch('hamali-updated', { perUnit });
+        }
+    }));
+
+    Alpine.data('itemRow', (itemId, initRate, taxPct, initMargin, initSell, qty) => ({
+        itemId,
+        rate:      initRate   || 0,
+        taxPct:    taxPct     || 0,
+        margin:    initMargin || 0,
+        sellPrice: initSell   || 0,
+        hml:       0,
+        qty,
+
+        get netCost() {
+            return (parseFloat(this.rate) || 0) * (1 + (parseFloat(this.taxPct) || 0) / 100) + (parseFloat(this.hml) || 0);
+        },
+
+        get isNegativeMargin() {
+            const sell = parseFloat(this.sellPrice) || 0;
+            return sell > 0 && sell < this.netCost;
+        },
+
+        // Notify parent finForm of updated per-item total via window event
+        notifyTotal() {
+            const total = this.netCost * (parseFloat(this.qty) || 0);
+            window.dispatchEvent(new CustomEvent('item-total-updated', { detail: { id: this.itemId, total } }));
+        },
+
+        init() {
+            // Listen for hamali distribution from finForm
+            this.$el.addEventListener('hamali-updated', (e) => {
+                this.hml = parseFloat(e.detail.perUnit) || 0;
+                this.calc();
+                this.notifyTotal();
+            });
+            // Register initial total so grandTotal is non-zero on first render
+            this.$nextTick(() => this.notifyTotal());
+        },
+
+        calc() {
+            if (this.margin) { this.calcFromMargin(); } else { this.notifyTotal(); }
+        },
+
+        calcFromMargin() {
+            const nc = this.netCost;
+            if (nc > 0) { this.sellPrice = (nc * (1 + (parseFloat(this.margin) || 0) / 100)).toFixed(2); }
+            this.notifyTotal();
+        },
+
+        calcFromSell() {
+            const nc = this.netCost;
+            if (nc > 0) { this.margin = (((parseFloat(this.sellPrice) - nc) / nc) * 100).toFixed(2); }
+            this.notifyTotal();
+        }
+    }));
+});
+</script>
 
 {% endblock %}

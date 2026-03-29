@@ -1,53 +1,325 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h1 class="text-3xl font-bold mb-8 text-slate-800">Dashboard</h1>
+<div class="px-6 py-8 md:px-10 max-w-[1600px] mx-auto">
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-    <!-- Low Stock Card -->
-    <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded shadow">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-red-700">Low Stock</h2>
-            <span class="text-3xl font-bold text-red-800">{{ low_stock_count }}</span>
-        </div>
-        <p class="text-red-600 mt-2">Batches below 10 units</p>
+    <!-- ── Page header ──────────────────────────────────────────────── -->
+    <div class="mb-8">
+        <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Overview</p>
+        <h1 class="text-3xl font-bold tracking-tight text-gray-900">Dashboard</h1>
     </div>
 
-    <!-- Expiring Soon Card -->
-    <div class="bg-yellow-50 border-l-4 border-yellow-500 p-6 rounded shadow">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-yellow-700">Expiring Soon</h2>
-            <span class="text-3xl font-bold text-yellow-800">{{ expiring_soon }}</span>
+    <!-- ── Row 1: Hero Financial Strip ──────────────────────────────── -->
+    <div class="bg-gray-900 text-white rounded-[2rem] p-8 mb-6 relative overflow-hidden">
+        <!-- decorative circles -->
+        <div class="absolute -top-16 -right-16 w-64 h-64 bg-white/[0.03] rounded-full pointer-events-none"></div>
+        <div class="absolute -bottom-24 -left-12 w-80 h-80 bg-white/[0.02] rounded-full pointer-events-none"></div>
+
+        <div class="relative grid grid-cols-1 md:grid-cols-3 gap-8 md:divide-x md:divide-white/10">
+
+            <!-- Today's Revenue -->
+            <div class="md:pr-8">
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Today's Revenue</p>
+                <p class="text-4xl font-bold tracking-tight">
+                    &#8377;{{ revenue_today|floatformat:0 }}
+                </p>
+                <div class="mt-3 flex items-center gap-2">
+                    {% if revenue_trend == 'up' %}
+                        <span class="text-emerald-400 text-sm font-semibold">&#8593;
+                            {% if revenue_delta_pct %}{{ revenue_delta_pct }}%{% else %}New{% endif %}
+                        </span>
+                    {% else %}
+                        <span class="text-red-400 text-sm font-semibold">&#8595;
+                            {% if revenue_delta_pct %}{{ revenue_delta_pct }}%{% endif %}
+                        </span>
+                    {% endif %}
+                    <span class="text-gray-500 text-xs">vs yesterday &#8377;{{ revenue_yesterday|floatformat:0 }}</span>
+                </div>
+            </div>
+
+            <!-- Today's Profit -->
+            <div class="md:px-8">
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Today's Gross Profit</p>
+                <p class="text-4xl font-bold tracking-tight {% if profit_today < 0 %}text-red-400{% endif %}">
+                    &#8377;{{ profit_today|floatformat:0 }}
+                </p>
+                <p class="mt-3 text-xs text-gray-500">Revenue minus landed cost</p>
+            </div>
+
+            <!-- Unbilled SRNB -->
+            <div class="md:pl-8">
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Unbilled SRNB Liability</p>
+                <p class="text-4xl font-bold tracking-tight {% if srnb_balance > 0 %}text-amber-400{% endif %}">
+                    &#8377;{{ srnb_balance|floatformat:0 }}
+                </p>
+                <div class="mt-3">
+                    {% if pending_finalization_count %}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-400/10 text-amber-400 border border-amber-400/20">
+                            {{ pending_finalization_count }} awaiting finalization
+                        </span>
+                    {% else %}
+                        <span class="text-gray-500 text-xs">All invoices finalized &#10003;</span>
+                    {% endif %}
+                </div>
+            </div>
+
         </div>
-        <p class="text-yellow-600 mt-2">Next 30 days</p>
     </div>
 
-    <!-- Today's Sales Card -->
-    <div class="bg-green-50 border-l-4 border-green-500 p-6 rounded shadow">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-green-700">Today's Sales</h2>
-            <span class="text-3xl font-bold text-green-800">₹{{ todays_sales }}</span>
+    <!-- ── Row 2: 7-Day Sales Trend ──────────────────────────────────── -->
+    <div class="bg-white rounded-2xl border border-gray-100 p-6 mb-6 shadow-sm shadow-gray-900/5">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Sales Trend</p>
+                <p class="text-sm font-semibold text-gray-700">Last 7 Days</p>
+            </div>
+            <a href="{% url 'sales_list' %}" class="text-xs font-semibold text-gray-400 hover:text-gray-700 transition-colors">View all sales &#8594;</a>
         </div>
-        <p class="text-green-600 mt-2">Total Revenue Today</p>
+        <div class="h-48 md:h-56">
+            <canvas id="salesTrendChart"></canvas>
+        </div>
+    </div>
+
+    <!-- ── Row 3: Two-column grid ────────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- LEFT (2/3): Inventory Alerts ────────────────────────────── -->
+        <div class="lg:col-span-2 space-y-4">
+
+            <!-- Alert summary pills -->
+            <div class="grid grid-cols-3 gap-4">
+
+                <!-- Low Stock -->
+                <a href="{% url 'inventory_list' %}?status=low" class="bg-red-50 border border-red-100 rounded-2xl p-5 flex items-center gap-4 hover:shadow-md hover:shadow-red-500/5 transition-all">
+                    <div class="p-2.5 bg-red-100 rounded-xl text-red-600 flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                        </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-2xl font-bold text-red-700">{{ low_stock_count }}</p>
+                        <p class="text-xs font-semibold text-red-500 truncate">Low Stock</p>
+                        <p class="text-[10px] text-red-400">Below 10 units</p>
+                    </div>
+                </a>
+
+                <!-- Expiring Soon -->
+                <a href="{% url 'inventory_list' %}?status=expiring" class="bg-amber-50 border border-amber-100 rounded-2xl p-5 flex items-center gap-4 hover:shadow-md hover:shadow-amber-500/5 transition-all">
+                    <div class="p-2.5 bg-amber-100 rounded-xl text-amber-600 flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-2xl font-bold text-amber-700">{{ expiring_soon_count }}</p>
+                        <p class="text-xs font-semibold text-amber-500 truncate">Expiring Soon</p>
+                        <p class="text-[10px] text-amber-400">Next 30 days</p>
+                    </div>
+                </a>
+
+                <!-- Dead Stock -->
+                <div class="bg-gray-50 border border-gray-100 rounded-2xl p-5 flex items-center gap-4">
+                    <div class="p-2.5 bg-gray-200 rounded-xl text-gray-500 flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>
+                        </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-2xl font-bold text-gray-600">{{ dead_stock_count }}</p>
+                        <p class="text-xs font-semibold text-gray-400 truncate">Dead Stock</p>
+                        <p class="text-[10px] text-gray-400">No sales in 60d</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Low stock batch list ──────────────────────────────── -->
+            <div class="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm shadow-gray-900/5">
+                <div class="flex items-center justify-between mb-4">
+                    <p class="text-sm font-bold text-gray-900">Critical Stock — Act Now</p>
+                    <a href="{% url 'inventory_list' %}?status=low" class="text-xs font-semibold text-blue-600 hover:text-blue-800">See all &#8594;</a>
+                </div>
+
+                {% if low_stock_batches %}
+                    <div class="space-y-0">
+                        {% for batch in low_stock_batches %}
+                        <div class="flex items-center justify-between py-3 border-b border-gray-50 last:border-0 group">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="w-2 h-2 rounded-full flex-shrink-0
+                                    {% if batch.current_quantity <= 2 %}bg-red-500
+                                    {% elif batch.current_quantity <= 5 %}bg-orange-400
+                                    {% else %}bg-amber-400{% endif %}">
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-gray-800 truncate">{{ batch.product.name }}</p>
+                                    <p class="text-[11px] text-gray-400">Batch {{ batch.batch_number }}{% if batch.expiry_date %}&nbsp;&#183;&nbsp;Exp {{ batch.expiry_date|date:"d M Y" }}{% endif %}</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 flex-shrink-0">
+                                <span class="text-sm font-bold
+                                    {% if batch.current_quantity <= 2 %}text-red-600
+                                    {% elif batch.current_quantity <= 5 %}text-orange-500
+                                    {% else %}text-amber-600{% endif %}">
+                                    {{ batch.current_quantity }} units
+                                </span>
+                                <a href="{% url 'batch_detail' batch.id %}"
+                                   class="text-[10px] font-bold text-gray-300 group-hover:text-blue-500 transition-colors">VIEW &#8594;</a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-8">
+                        <p class="text-sm text-gray-400">All stock levels are healthy &#10003;</p>
+                    </div>
+                {% endif %}
+            </div>
+
+        </div>
+
+        <!-- RIGHT (1/3): Action Items + Top 5 ───────────────────────── -->
+        <div class="space-y-4">
+
+            <!-- Action Items -->
+            <div class="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm shadow-gray-900/5">
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Action Required</p>
+
+                <div class="space-y-3">
+
+                    {% if pending_finalization_count %}
+                    <a href="{% url 'purchase_list' %}" class="flex items-center justify-between p-3 bg-amber-50 border border-amber-100 rounded-xl hover:bg-amber-100 transition-colors">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-amber-200 rounded-lg flex items-center justify-center text-amber-700 flex-shrink-0">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <p class="text-xs font-bold text-amber-800">Pending Finalization</p>
+                                <p class="text-[10px] text-amber-600">Awaiting financial rates</p>
+                            </div>
+                        </div>
+                        <span class="text-lg font-bold text-amber-700">{{ pending_finalization_count }}</span>
+                    </a>
+                    {% endif %}
+
+                    {% if expiring_soon_count %}
+                    <a href="{% url 'inventory_list' %}?status=expiring" class="flex items-center justify-between p-3 bg-orange-50 border border-orange-100 rounded-xl hover:bg-orange-100 transition-colors">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-orange-200 rounded-lg flex items-center justify-center text-orange-700 flex-shrink-0">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <p class="text-xs font-bold text-orange-800">Expiry Alert</p>
+                                <p class="text-[10px] text-orange-600">Next 30 days</p>
+                            </div>
+                        </div>
+                        <span class="text-lg font-bold text-orange-700">{{ expiring_soon_count }}</span>
+                    </a>
+                    {% endif %}
+
+                    {% if not pending_finalization_count and not expiring_soon_count %}
+                    <div class="text-center py-6">
+                        <p class="text-2xl mb-2">&#10003;</p>
+                        <p class="text-sm font-semibold text-gray-500">All clear</p>
+                        <p class="text-xs text-gray-400">No actions required</p>
+                    </div>
+                    {% endif %}
+
+                </div>
+            </div>
+
+            <!-- Top 5 Products by Margin (30d) -->
+            <div class="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm shadow-gray-900/5">
+                <p class="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Top Performers</p>
+                <p class="text-[11px] text-gray-400 mb-4">By gross margin — last 30 days</p>
+
+                {% if top_products %}
+                    <div class="space-y-4">
+                        {% for p in top_products %}
+                        <div>
+                            <div class="flex items-center justify-between mb-1">
+                                <p class="text-xs font-semibold text-gray-700 truncate pr-2">{{ p.batch__product__name }}</p>
+                                <p class="text-xs font-bold text-emerald-600 flex-shrink-0">+{{ p.margin_pct|floatformat:1 }}%</p>
+                            </div>
+                            <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-emerald-500 rounded-full" style="width: {{ p.bar_pct }}%"></div>
+                            </div>
+                            <p class="text-[10px] text-gray-400 mt-0.5">&#8377;{{ p.margin|floatformat:0 }} margin on &#8377;{{ p.revenue|floatformat:0 }}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-6">
+                        <p class="text-xs text-gray-400">No sales in the last 30 days</p>
+                    </div>
+                {% endif %}
+            </div>
+
+        </div>
     </div>
 
 </div>
 
-{# Sprint 24: Pending Finalization warning — only shown when there are RECEIVED invoices awaiting financial settlement #}
-{% if pending_finalization_count %}
-<div class="mt-6 bg-amber-50 border-l-4 border-amber-500 p-6 rounded shadow">
-    <div class="flex items-center justify-between">
-        <div>
-            <h2 class="text-xl font-semibold text-amber-700">⚠️ Pending Finalization</h2>
-            <p class="text-amber-600 mt-2">Purchases received — awaiting invoice number &amp; financial rates</p>
-        </div>
-        <span class="text-3xl font-bold text-amber-800">{{ pending_finalization_count }}</span>
-    </div>
-    <a href="{% url 'purchase_list' %}" class="inline-block mt-4 text-amber-700 font-bold text-sm hover:underline">
-        View Purchases →
-    </a>
-</div>
-{% endif %}
+<!-- Chart.js loaded only on this page -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var ctx = document.getElementById('salesTrendChart');
+    if (!ctx) return;
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ chart_labels_json }},
+            datasets: [{
+                data: {{ chart_data_json }},
+                borderColor: '#111827',
+                borderWidth: 2,
+                pointRadius: 4,
+                pointBackgroundColor: '#111827',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                fill: true,
+                backgroundColor: 'rgba(17,24,39,0.04)',
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(c) {
+                            return '\u20B9' + c.parsed.y.toLocaleString('en-IN', {maximumFractionDigits: 0});
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    border: { display: false },
+                    ticks: { font: { size: 11, family: 'Inter' }, color: '#9ca3af' }
+                },
+                y: {
+                    grid: { color: '#f3f4f6' },
+                    border: { display: false },
+                    ticks: {
+                        font: { size: 11, family: 'Inter' },
+                        color: '#9ca3af',
+                        callback: function(v) {
+                            return '\u20B9' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v);
+                        }
+                    }
+                }
+            }
+        }
+    });
+})();
+</script>
 
 {% endblock %}

@@ -24,6 +24,7 @@ urlpatterns = [
     path('receipts/<int:pk>/cancel/', views.cancel_customer_payment, name='cancel_customer_payment'),
     path('purchases/', views.purchase_list, name='purchase_list'),
     path('purchases/new/', views.create_purchase, name='create_purchase'),
+    path('purchases/fetch-pricing/', views.fetch_latest_pricing, name='fetch_latest_pricing'),
     path('purchases/<int:pk>/', views.purchase_detail, name='purchase_detail'),
     path('purchases/<int:pk>/edit/', views.purchase_edit, name='purchase_edit'),
     path('purchases/<int:pk>/delete/', views.purchase_delete, name='purchase_delete'),
