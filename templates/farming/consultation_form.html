@@ -1,0 +1,242 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-6 md:px-10 lg:px-12 pt-8 pb-28">
+
+    <!-- Header -->
+    <header class="flex flex-col gap-1.5 mb-8">
+        <nav class="flex items-center gap-2 text-gray-400 text-[10px] font-bold uppercase tracking-widest">
+            <span>Farming</span>
+            <span>•</span>
+            <span>Consultations</span>
+            <span>•</span>
+            <span class="text-green-600">New</span>
+        </nav>
+        <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 leading-none">
+            New Consultation
+        </h1>
+        {% if customer %}
+        <p class="text-gray-500 text-sm mt-1">
+            For <span class="font-semibold text-gray-800">{{ customer.name }}</span>
+            {% if customer.village %} · {{ customer.village.name }}{% endif %}
+        </p>
+        {% endif %}
+    </header>
+
+    <form method="post" enctype="multipart/form-data" novalidate>
+        {% csrf_token %}
+
+        <!-- ── Section 1: Header Fields ──────────────────────────────────── -->
+        <section class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6">
+            <h2 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-5">
+                Visit Details
+            </h2>
+
+            {% if form.non_field_errors %}
+            <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+                {{ form.non_field_errors|join:", " }}
+            </div>
+            {% endif %}
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+                <!-- Customer -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Farmer <span class="text-red-500">*</span>
+                    </label>
+                    {{ form.customer }}
+                    {% if form.customer.errors %}
+                    <p class="text-xs text-red-600">{{ form.customer.errors|join:", " }}</p>
+                    {% endif %}
+                </div>
+
+                <!-- Agronomist -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Agronomist
+                    </label>
+                    {{ form.agronomist }}
+                </div>
+
+                <!-- Field Visit (optional) -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Linked Visit
+                    </label>
+                    {{ form.field_visit }}
+                </div>
+
+                <!-- Date -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Date <span class="text-red-500">*</span>
+                    </label>
+                    {{ form.consultation_date }}
+                    {% if form.consultation_date.errors %}
+                    <p class="text-xs text-red-600">{{ form.consultation_date.errors|join:", " }}</p>
+                    {% endif %}
+                </div>
+
+                <!-- Time -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Time
+                    </label>
+                    {{ form.consultation_time }}
+                </div>
+
+                <!-- Weather -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Weather
+                    </label>
+                    {{ form.weather_conditions }}
+                </div>
+
+                <!-- Crop Stage -->
+                <div class="space-y-1.5 md:col-span-2 lg:col-span-1">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Crop Stage
+                    </label>
+                    {{ form.crop_stage }}
+                </div>
+
+                <!-- General Observations -->
+                <div class="space-y-1.5 md:col-span-2 lg:col-span-3">
+                    <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        General Observations
+                    </label>
+                    {{ form.general_observations }}
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ── Section 2: Diagnosis Lines ────────────────────────────────── -->
+        <!--
+            Rule 33: Alpine state initialised from a JS variable, NOT inline JSON.
+            dxCount mirrors dx-TOTAL_FORMS so the management form stays in sync.
+        -->
+        <section class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6"
+                 x-data="{ dxCount: {{ dx_formset.total_form_count }} }"
+                 @htmx:after-swap.window="
+                     if ($event.detail.target && $event.detail.target.id === 'dx-rows') dxCount++
+                 ">
+
+            <div class="flex items-center justify-between mb-5">
+                <div>
+                    <h2 class="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                        Diagnosis
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-0.5">Identify each pest / disease per plot</p>
+                </div>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 text-amber-700 text-xs font-bold rounded-full border border-amber-200"
+                      x-text="dxCount + ' row' + (dxCount !== 1 ? 's' : '')"></span>
+            </div>
+
+            <!-- Management form (Alpine-driven TOTAL_FORMS) -->
+            <input type="hidden" name="dx-TOTAL_FORMS"   :value="dxCount">
+            <input type="hidden" name="dx-INITIAL_FORMS" value="{{ dx_formset.initial_form_count }}">
+            <input type="hidden" name="dx-MIN_NUM_FORMS"  value="0">
+            <input type="hidden" name="dx-MAX_NUM_FORMS"  value="1000">
+
+            <!-- Row container -->
+            <div id="dx-rows" class="space-y-3">
+                {% for form in dx_formset %}
+                    {% include "farming/partials/diagnosis_row.html" with form=form form_index=forloop.counter0 %}
+                {% empty %}
+                    <p id="dx-empty-hint"
+                       class="text-sm text-gray-400 text-center py-6 border-2 border-dashed border-gray-200 rounded-xl"
+                       x-show="dxCount === 0">
+                        No diagnoses yet — click <strong>+ Add Diagnosis</strong> to begin.
+                    </p>
+                {% endfor %}
+            </div>
+
+            <!-- Add row button -->
+            <button type="button"
+                    class="mt-4 inline-flex items-center gap-2 px-4 py-2 border border-dashed border-green-400 text-green-700 hover:bg-green-50 font-semibold rounded-xl text-sm transition-colors"
+                    @click="
+                        htmx.ajax(
+                            'GET',
+                            '{% url 'add_diagnosis_row' %}?form_index=' + dxCount + '&customer_pk={{ customer.pk|default:'' }}',
+                            { target: '#dx-rows', swap: 'beforeend' }
+                        )
+                    ">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add Diagnosis
+            </button>
+        </section>
+
+        <!-- ── Section 3: Prescription Lines ─────────────────────────────── -->
+        <section class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-8"
+                 x-data="{ rxCount: {{ rx_formset.total_form_count }} }"
+                 @htmx:after-swap.window="
+                     if ($event.detail.target && $event.detail.target.id === 'rx-rows') rxCount++
+                 ">
+
+            <div class="flex items-center justify-between mb-5">
+                <div>
+                    <h2 class="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                        Prescription
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-0.5">Chemicals & fertilizers to apply</p>
+                </div>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-200"
+                      x-text="rxCount + ' row' + (rxCount !== 1 ? 's' : '')"></span>
+            </div>
+
+            <!-- Management form -->
+            <input type="hidden" name="rx-TOTAL_FORMS"   :value="rxCount">
+            <input type="hidden" name="rx-INITIAL_FORMS" value="{{ rx_formset.initial_form_count }}">
+            <input type="hidden" name="rx-MIN_NUM_FORMS"  value="0">
+            <input type="hidden" name="rx-MAX_NUM_FORMS"  value="1000">
+
+            <!-- Row container -->
+            <div id="rx-rows" class="space-y-4">
+                {% for form in rx_formset %}
+                    {% include "farming/partials/prescription_row.html" with form=form form_index=forloop.counter0 %}
+                {% empty %}
+                    <p id="rx-empty-hint"
+                       class="text-sm text-gray-400 text-center py-6 border-2 border-dashed border-gray-200 rounded-xl"
+                       x-show="rxCount === 0">
+                        No prescriptions yet — add a diagnosis first, then prescribe products.
+                    </p>
+                {% endfor %}
+            </div>
+
+            <!-- Add row button -->
+            <button type="button"
+                    class="mt-4 inline-flex items-center gap-2 px-4 py-2 border border-dashed border-blue-400 text-blue-700 hover:bg-blue-50 font-semibold rounded-xl text-sm transition-colors"
+                    @click="
+                        htmx.ajax(
+                            'GET',
+                            '{% url 'add_prescription_row' %}?form_index=' + rxCount,
+                            { target: '#rx-rows', swap: 'beforeend' }
+                        )
+                    ">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add Prescription
+            </button>
+        </section>
+
+        <!-- ── Submit Bar ──────────────────────────────────────────────────── -->
+        <div class="fixed bottom-0 left-64 right-0 bg-white border-t border-gray-100 px-8 py-4 flex items-center justify-between z-40 shadow-lg">
+            <a href="{% if customer %}{{ request.META.HTTP_REFERER|default:'/' }}{% else %}/{% endif %}"
+               class="px-5 py-2.5 border border-gray-200 text-gray-500 hover:bg-gray-50 font-semibold rounded-xl text-sm transition-colors">
+                Cancel
+            </a>
+            <button type="submit"
+                    class="px-7 py-2.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-xl text-sm transition-colors shadow-sm">
+                Save Consultation
+            </button>
+        </div>
+
+    </form>
+</div>
+{% endblock %}

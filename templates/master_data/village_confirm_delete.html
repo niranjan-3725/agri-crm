@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="min-h-screen bg-[#F8F9FA] flex items-start justify-center pt-16 px-6">
+    <div class="w-full max-w-lg">
+
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-6">
+            <a href="{% url 'village_list' %}" class="hover:text-red-500 transition-colors">Villages</a>
+            <span>•</span>
+            <span class="text-red-400">Delete</span>
+        </div>
+
+        <!-- Card -->
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.06)] overflow-hidden">
+
+            <!-- Warning Header -->
+            <div class="bg-red-50 border-b border-red-100 px-8 py-6 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold text-gray-900">Delete Village</h1>
+                    <p class="text-sm text-red-600 font-medium mt-0.5">This action cannot be undone</p>
+                </div>
+            </div>
+
+            <!-- Body -->
+            <div class="px-8 py-6 space-y-5">
+
+                <p class="text-gray-700 font-medium">
+                    Are you sure you want to delete
+                    <span class="font-bold text-gray-900">"{{ object.name }}"</span>?
+                </p>
+
+                {% if customer_count > 0 %}
+                <!-- Blocked: has customers -->
+                <div class="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+                    <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <div class="text-sm text-amber-800">
+                        <p class="font-semibold">Cannot delete — village is in use</p>
+                        <p class="mt-0.5 text-amber-700">
+                            <strong>{{ customer_count }}</strong> customer{{ customer_count|pluralize }} {{ customer_count|pluralize:"is,are" }} linked to this village.
+                            Reassign or remove those customers first.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex justify-end">
+                    <a href="{% url 'village_list' %}"
+                        class="px-6 py-3 bg-gray-900 hover:bg-black text-white font-bold rounded-xl transition-colors text-sm">
+                        Back to Villages
+                    </a>
+                </div>
+
+                {% else %}
+                <!-- Safe to delete -->
+                <p class="text-sm text-gray-500">
+                    This village has no linked customers and can be safely removed.
+                </p>
+
+                <form method="post" class="flex items-center justify-between gap-4 pt-2">
+                    {% csrf_token %}
+                    <a href="{% url 'village_list' %}"
+                        class="px-6 py-3 rounded-xl border border-gray-200 text-gray-500 font-semibold hover:bg-gray-50 hover:text-gray-900 transition-colors text-sm">
+                        Cancel
+                    </a>
+                    <button type="submit"
+                        class="px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-600/20 active:scale-95 transition-all text-sm">
+                        Yes, Delete Village
+                    </button>
+                </form>
+
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

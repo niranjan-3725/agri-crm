@@ -1,0 +1,88 @@
+{% comment %}
+  HTMX fragment — one DiagnosisLine form row.
+  Rendered by: add_diagnosis_row (GET) and within dx_formset loop in consultation_form.html
+  Prefix: dx-{{ form_index }}
+{% endcomment %}
+<div id="dx-row-{{ form_index }}"
+     class="relative grid grid-cols-1 md:grid-cols-12 gap-3 p-4 bg-gray-50 border border-gray-200 rounded-xl group">
+
+    <!-- Row number badge -->
+    <div class="absolute -top-2.5 left-4 px-2 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full">
+        #{{ form_index|add:1 }}
+    </div>
+
+    <!-- Hidden formset bookkeeping -->
+    {{ form.id }}
+
+    <!-- Col 1: Plot / Cultivation Record (3/12) -->
+    <div class="md:col-span-3 space-y-1">
+        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+            Plot / Crop
+        </label>
+        {{ form.cultivation_record }}
+        {% if form.cultivation_record.errors %}
+        <p class="text-xs text-red-600">{{ form.cultivation_record.errors|join:", " }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Col 2: Pest / Disease (3/12) -->
+    <div class="md:col-span-3 space-y-1">
+        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+            Pest / Disease <span class="text-red-500">*</span>
+        </label>
+        {{ form.pest_disease }}
+        {% if form.pest_disease.errors %}
+        <p class="text-xs text-red-600">{{ form.pest_disease.errors|join:", " }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Col 3: Severity (2/12) -->
+    <div class="md:col-span-2 space-y-1">
+        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+            Severity
+        </label>
+        {{ form.severity }}
+    </div>
+
+    <!-- Col 4: Affected Area (2/12) -->
+    <div class="md:col-span-2 space-y-1">
+        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+            Affected Acres <span class="text-red-500">*</span>
+        </label>
+        {{ form.affected_area_acres }}
+        {% if form.affected_area_acres.errors %}
+        <p class="text-xs text-red-600">{{ form.affected_area_acres.errors|join:", " }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Col 5: Symptoms (full width on mobile, 2/12 on desktop) -->
+    <div class="md:col-span-2 space-y-1">
+        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">
+            Symptoms
+        </label>
+        {{ form.symptoms_observed }}
+    </div>
+
+    <!-- Remove button -->
+    <div class="md:col-span-12 flex justify-end mt-1">
+        <button type="button"
+                class="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 font-semibold transition-colors opacity-0 group-hover:opacity-100"
+                @click="
+                    document.querySelector('[name=\'{{ form.prefix }}-DELETE\']') &&
+                    (document.querySelector('[name=\'{{ form.prefix }}-DELETE\']').checked = true);
+                    $el.closest('[id^=dx-row]').style.display = 'none';
+                    dxCount--;
+                ">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+            Remove
+        </button>
+    </div>
+
+    <!-- Django DELETE checkbox (hidden — toggled by the Remove button) -->
+    <input type="checkbox"
+           name="{{ form.prefix }}-DELETE"
+           id="{{ form.prefix }}-DELETE"
+           class="hidden">
+</div>

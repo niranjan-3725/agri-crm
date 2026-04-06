@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="min-h-screen bg-[#F8F9FA]">
+
+    <!-- Header -->
+    <div class="max-w-5xl mx-auto px-6 pt-10 pb-4">
+        <div class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">
+            <span class="bg-amber-50 text-amber-600 px-2 py-1 rounded">Farming</span>
+            <span>•</span>
+            <span>Seasonal Update</span>
+        </div>
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+            <div>
+                <h1 class="text-4xl font-bold text-gray-900 tracking-tight">Seasonal Transition</h1>
+                <p class="text-gray-400 mt-1 text-sm">
+                    Transitioning from
+                    <span class="font-semibold text-gray-700">{{ outgoing_season }} {{ outgoing_year }}</span>
+                    →
+                    <span class="font-semibold text-green-700">{{ next_season }} {{ next_year }}</span>
+                </p>
+            </div>
+            <!-- Legend -->
+            <div class="flex items-center gap-4 text-xs font-medium text-gray-500">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span>Same crops</span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block"></span>Update</span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block"></span>Skipped</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-5xl mx-auto px-6 pb-16">
+
+        {% if not customers %}
+        <!-- Nothing to transition -->
+        <div class="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200 mt-6">
+            <div class="w-16 h-16 mx-auto mb-4 bg-green-50 rounded-2xl flex items-center justify-center">
+                <svg class="w-8 h-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </div>
+            <div class="text-gray-600 font-medium mb-2">All up to date!</div>
+            <p class="text-sm text-gray-400">No customers have active {{ outgoing_season }} {{ outgoing_year }} records to transition.</p>
+        </div>
+
+        {% else %}
+
+        <!-- Info banner -->
+        <div class="mt-6 mb-6 flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+            <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <div class="text-sm text-amber-800">
+                <p class="font-semibold">{{ customers|length }} farmer{{ customers|length|pluralize }} need{{ customers|length|pluralize:"s," }} review</p>
+                <p class="text-amber-700 mt-0.5">
+                    For each farmer: click <strong>Same Crops</strong> to roll over their records automatically,
+                    <strong>Update</strong> to edit manually, or <strong>Skip</strong> to come back later.
+                </p>
+            </div>
+        </div>
+
+        <!-- Customer table -->
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.04)] overflow-hidden">
+
+            <!-- Table header -->
+            <div class="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                <div class="col-span-4">Farmer</div>
+                <div class="col-span-2">Village</div>
+                <div class="col-span-2 text-center">Active Crops</div>
+                <div class="col-span-4 text-right">Actions</div>
+            </div>
+
+            <!-- Customer rows -->
+            <div id="transition-rows" class="divide-y divide-gray-50">
+                {% for customer in customers %}
+                {% include 'farming/partials/seasonal_customer_row.html' with customer=customer action_result=None outgoing_season=outgoing_season outgoing_year=outgoing_year next_season=next_season next_year=next_year %}
+                {% endfor %}
+            </div>
+
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+{% endblock %}

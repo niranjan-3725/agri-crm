@@ -1,0 +1,67 @@
+<form method="post"
+    action="{% url 'cultivation_save_row' customer.pk %}"
+    hx-post="{% url 'cultivation_save_row' customer.pk %}"
+    hx-target="#add-row-slot"
+    hx-swap="outerHTML"
+    class="space-y-4">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+    <div class="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+        {{ form.non_field_errors|join:", " }}
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <!-- Crop -->
+        <div class="col-span-2 md:col-span-1 space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Crop <span class="text-red-500">*</span></label>
+            {{ form.crop }}
+            {% if form.crop.errors %}<p class="text-xs text-red-600">{{ form.crop.errors|join:", " }}</p>{% endif %}
+        </div>
+
+        <!-- Acreage -->
+        <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Acreage <span class="text-red-500">*</span></label>
+            {{ form.acreage }}
+            {% if form.acreage.errors %}<p class="text-xs text-red-600">{{ form.acreage.errors|join:", " }}</p>{% endif %}
+        </div>
+
+        <!-- Season -->
+        <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Season <span class="text-red-500">*</span></label>
+            {{ form.season }}
+            {% if form.season.errors %}<p class="text-xs text-red-600">{{ form.season.errors|join:", " }}</p>{% endif %}
+        </div>
+
+        <!-- Year -->
+        <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Year <span class="text-red-500">*</span></label>
+            {{ form.season_year }}
+            {% if form.season_year.errors %}<p class="text-xs text-red-600">{{ form.season_year.errors|join:", " }}</p>{% endif %}
+        </div>
+
+        <!-- Status -->
+        <div class="space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Status</label>
+            {{ form.status }}
+        </div>
+
+        <!-- Notes -->
+        <div class="col-span-2 md:col-span-3 space-y-1.5">
+            <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Notes</label>
+            {{ form.notes }}
+        </div>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2">
+        <button type="submit"
+            class="px-5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-sm transition-colors shadow-sm">
+            Save Record
+        </button>
+        <button type="button" @click="showAddForm = false"
+            class="px-5 py-2 border border-gray-200 text-gray-500 hover:bg-gray-50 font-semibold rounded-xl text-sm transition-colors">
+            Cancel
+        </button>
+    </div>
+</form>

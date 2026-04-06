@@ -1,5 +1,17 @@
 from django.db import models
 
+
+class Village(models.Model):
+    name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Category(models.Model):
     name = models.CharField(max_length=255)
     cgst_rate = models.DecimalField(max_digits=10, decimal_places=2)
@@ -39,6 +51,18 @@ class Product(models.Model):
         help_text="Weighted-average cost, recalculated on purchase inward.",
     )
 
+    class Meta:
+        # Rule 33 (Identity Pair Invariant): A product is uniquely identified by
+        # its name + manufacturer combination. Two products from different
+        # manufacturers may share a name; the same manufacturer may not list
+        # the same product twice.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['name', 'manufacturer'],
+                name='unique_product_name_manufacturer',
+            )
+        ]
+
     def __str__(self):
         return self.name
 
@@ -54,13 +78,32 @@ class Supplier(models.Model):
         return self.name
 
 class Customer(models.Model):
+    # --- Identity (Rule 31: Identity Uniqueness Invariant) ---
     name = models.CharField(max_length=255)
-    mobile_no = models.CharField(max_length=20)
-    city = models.CharField(max_length=100, null=True, blank=True, verbose_name="City/Village")
+    mobile_no = models.CharField(max_length=20, unique=True, verbose_name="Mobile Number")
+    # --- Location ---
+    village = models.ForeignKey(
+        Village, on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name="City/Village",
+    )
     address = models.TextField()
+    # --- Business ---
     gstin = models.CharField(max_length=50, blank=True, null=True)
     wallet_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     created_at = models.DateTimeField(auto_now_add=True)
+    # --- Farm Profile (optional) ---
+    father_name = models.CharField(
+        max_length=255, null=True, blank=True, verbose_name="Father's Name"
+    )
+    land_size = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name="Land Size (acres)",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['mobile_no'], name='unique_customer_mobile_no'),
+        ]
 
     def __str__(self):
         return self.name

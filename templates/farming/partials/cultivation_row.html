@@ -1,0 +1,66 @@
+{% load humanize %}
+<div id="cultivation-row-{{ rec.pk }}"
+    class="bg-white rounded-2xl border border-gray-100 p-5 flex flex-col md:flex-row items-start md:items-center gap-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.04)]">
+
+    <!-- Crop icon + name -->
+    <div class="flex items-center gap-3 flex-1 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a10 10 0 0 1 10 10c0 5.52-4.48 10-10 10S2 17.52 2 12 6.48 2 12 2z"/>
+                <path d="M12 8v4M10 12h4"/>
+            </svg>
+        </div>
+        <div class="min-w-0">
+            <div class="font-bold text-gray-900 truncate">{{ rec.crop.name }}</div>
+            <div class="text-sm text-gray-500">{{ rec.acreage }} acres</div>
+        </div>
+    </div>
+
+    <!-- Status badge -->
+    <div class="shrink-0">
+        {% if rec.status == 'ACTIVE' %}
+        <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>Active
+        </span>
+        {% elif rec.status == 'HARVESTED' %}
+        <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-full">
+            <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>Harvested
+        </span>
+        {% else %}
+        <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>Planned
+        </span>
+        {% endif %}
+    </div>
+
+    <!-- Notes (if any) -->
+    {% if rec.notes %}
+    <div class="text-xs text-gray-400 italic flex-1 min-w-0 truncate hidden md:block">{{ rec.notes }}</div>
+    {% endif %}
+
+    <!-- Toggle status button -->
+    <form method="post"
+        action="{% url 'cultivation_status_update' rec.pk %}"
+        hx-post="{% url 'cultivation_status_update' rec.pk %}"
+        hx-target="#cultivation-row-{{ rec.pk }}"
+        hx-swap="outerHTML"
+        class="shrink-0">
+        {% csrf_token %}
+        {% if rec.status == 'ACTIVE' %}
+        <button type="submit"
+            class="text-xs font-semibold text-gray-500 hover:text-amber-600 bg-gray-50 hover:bg-amber-50 border border-gray-200 hover:border-amber-200 px-3 py-1.5 rounded-lg transition-colors">
+            Mark Harvested
+        </button>
+        {% elif rec.status == 'HARVESTED' %}
+        <button type="submit"
+            class="text-xs font-semibold text-gray-500 hover:text-green-600 bg-gray-50 hover:bg-green-50 border border-gray-200 hover:border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+            Reactivate
+        </button>
+        {% else %}
+        <button type="submit"
+            class="text-xs font-semibold text-blue-600 hover:text-green-600 bg-blue-50 hover:bg-green-50 border border-blue-200 hover:border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+            Confirm Active
+        </button>
+        {% endif %}
+    </form>
+</div>

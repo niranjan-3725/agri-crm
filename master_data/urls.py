@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from farming import views as farming_views
 
 urlpatterns = [
     # Customer URLs
@@ -8,6 +9,19 @@ urlpatterns = [
     path('customers/<int:pk>/edit/', views.CustomerUpdateView.as_view(), name='customer_edit'),
     path('customers/<int:pk>/delete/', views.CustomerDeleteView.as_view(), name='customer_delete'),
     path('customers/export/', views.export_customers, name='customer_export'),
+    path('customers/check-mobile/', views.check_mobile, name='customer_check_mobile'),
+
+    # Cultivation Records — customer-scoped (lives under /masters/customers/<pk>/)
+    path('customers/<int:pk>/cultivation/',          farming_views.cultivation_list,      name='cultivation_list'),
+    path('customers/<int:pk>/cultivation/add-row/',  farming_views.cultivation_add_row,   name='cultivation_add_row'),
+    path('customers/<int:pk>/cultivation/save/',     farming_views.cultivation_save_row,  name='cultivation_save_row'),
+    path('villages/create/', views.create_village, name='create_village'),
+
+    # Village Master URLs
+    path('villages/', views.VillageListView.as_view(), name='village_list'),
+    path('villages/add/', views.VillageCreateView.as_view(), name='village_add'),
+    path('villages/<int:pk>/edit/', views.VillageUpdateView.as_view(), name='village_edit'),
+    path('villages/<int:pk>/delete/', views.VillageDeleteView.as_view(), name='village_delete'),
 
     # Supplier URLs
     path('suppliers/', views.SupplierListView.as_view(), name='supplier_list'),
@@ -21,6 +35,10 @@ urlpatterns = [
     path('products/add/ajax/', views.create_product_ajax, name='create_product_ajax'),
     path('products/<int:pk>/edit/', views.ProductUpdateView.as_view(), name='product_edit'),
     path('products/<int:pk>/delete/', views.ProductDeleteView.as_view(), name='product_delete'),
+
+    # Product quick-create helpers
+    path('categories/create/', views.create_category, name='create_category'),
+    path('manufacturers/create/', views.create_manufacturer, name='create_manufacturer'),
 
     # Category URLs
     path('categories/', views.CategoryListView.as_view(), name='category_list'),

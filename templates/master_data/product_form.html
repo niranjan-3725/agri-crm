@@ -1,163 +1,462 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto p-6 md:p-10 lg:p-12 pb-32">
+<div class="max-w-3xl mx-auto px-6 md:px-10 lg:px-12 pt-8 pb-28">
 
-    <!-- Header Section -->
-    <header>
-        <nav class="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
-            <span>CATALOG</span>
+    <!-- Header -->
+    <header class="flex flex-col gap-1.5 mb-8">
+        <nav class="flex items-center gap-2 text-gray-400 text-[10px] font-bold uppercase tracking-widest">
+            <span>Catalog</span>
             <span>•</span>
-            <span class="text-orange-600">{% if form.instance.pk %}EDIT{% else %}NEW{% endif %}</span>
+            {% if form.instance.pk %}
+            <span class="text-orange-600">Edit Product</span>
+            {% else %}
+            <span class="text-orange-600">New Product</span>
+            {% endif %}
         </nav>
-        <h1 class="text-5xl font-bold tracking-tight text-gray-900">
-            {% if form.instance.pk %}Edit Product{% else %}New Product{% endif %}
+        <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 leading-none">
+            {% if form.instance.pk %}{{ form.instance.name }}{% else %}New Product{% endif %}
         </h1>
     </header>
 
-    <!-- Form Card -->
-    <div
-        class="bg-white rounded-[2.5rem] p-10 md:p-12 shadow-[0_20px_40px_-12px_rgba(0,0,0,0.02)] border border-gray-100 mt-8">
+    <!--
+        Rule 33: JSON lists injected via <script> tags — never inline in x-data="..."
+        because JSON double-quotes break the HTML attribute boundary.
+    -->
+    <script>
+        window._agriCategories    = {{ categories_json|safe }};
+        window._agriManufacturers = {{ manufacturers_json|safe }};
+    </script>
 
-        <form method="post" class="space-y-8" novalidate>
-            {% csrf_token %}
+    <form method="post" novalidate
+          x-data="{
+              /* ── Category searchable select ── */
+              catOpen: false,
+              catSearch: '{% if form.instance.category %}{{ form.instance.category.name|escapejs }}{% endif %}',
+              catId: '{{ form.category.value|default:'' }}',
+              cats: (window._agriCategories || []),
 
-            <!-- Row 1: Name -->
-            <div class="grid grid-cols-1 gap-8">
-                <div>
+              get catFiltered() {
+                  const q = this.catSearch.trim().toLowerCase();
+                  if (!q) return this.cats;
+                  return this.cats.filter(c => c.name.toLowerCase().includes(q));
+              },
+              get catHasNoMatch() {
+                  return this.catSearch.trim().length > 0 && this.catFiltered.length === 0;
+              },
+              catSelect(c) { this.catId = c.id; this.catSearch = c.name; this.catOpen = false; },
+              catClear()    { this.catId = ''; this.catSearch = ''; },
+
+              /* ── Category Quick-Add modal ── */
+              catModal: false,
+              newCatName: '',
+              newCatCgst: '',
+              newCatSgst: '',
+              catSaving: false,
+              catError: '',
+
+              openCatModal() {
+                  this.newCatName = this.catSearch;
+                  this.newCatCgst = '';
+                  this.newCatSgst = '';
+                  this.catError   = '';
+                  this.catModal   = true;
+                  this.catOpen    = false;
+              },
+              async saveCat() {
+                  if (!this.newCatName.trim() || this.catSaving) return;
+                  this.catSaving = true; this.catError = '';
+                  try {
+                      const res = await fetch('{% url 'create_category' %}', {
+                          method: 'POST',
+                          headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value, 'Content-Type': 'application/x-www-form-urlencoded' },
+                          body: new URLSearchParams({ name: this.newCatName.trim(), cgst_rate: this.newCatCgst || '0', sgst_rate: this.newCatSgst || '0' }),
+                      });
+                      const d = await res.json();
+                      if (!res.ok) { this.catError = d.error || 'Error'; return; }
+                      if (!this.cats.find(c => c.id === d.id)) { this.cats.push({id: d.id, name: d.name}); this.cats.sort((a,b) => a.name.localeCompare(b.name)); }
+                      this.catSelect({id: d.id, name: d.name});
+                      this.catModal = false; this.newCatName = '';
+                  } catch(e) { this.catError = 'Network error.'; }
+                  finally    { this.catSaving = false; }
+              },
+
+              /* ── Manufacturer searchable select ── */
+              mfgOpen: false,
+              mfgSearch: '{% if form.instance.manufacturer %}{{ form.instance.manufacturer.name|escapejs }}{% endif %}',
+              mfgId: '{{ form.manufacturer.value|default:'' }}',
+              mfgs: (window._agriManufacturers || []),
+
+              get mfgFiltered() {
+                  const q = this.mfgSearch.trim().toLowerCase();
+                  if (!q) return this.mfgs;
+                  return this.mfgs.filter(m => m.name.toLowerCase().includes(q));
+              },
+              get mfgHasNoMatch() {
+                  return this.mfgSearch.trim().length > 0 && this.mfgFiltered.length === 0;
+              },
+              mfgSelect(m) { this.mfgId = m.id; this.mfgSearch = m.name; this.mfgOpen = false; },
+              mfgClear()    { this.mfgId = ''; this.mfgSearch = ''; },
+
+              /* ── Manufacturer Quick-Add modal ── */
+              mfgModal: false,
+              newMfgName: '',
+              mfgSaving: false,
+              mfgError: '',
+
+              openMfgModal() {
+                  this.newMfgName = this.mfgSearch;
+                  this.mfgError   = '';
+                  this.mfgModal   = true;
+                  this.mfgOpen    = false;
+              },
+              async saveMfg() {
+                  if (!this.newMfgName.trim() || this.mfgSaving) return;
+                  this.mfgSaving = true; this.mfgError = '';
+                  try {
+                      const res = await fetch('{% url 'create_manufacturer' %}', {
+                          method: 'POST',
+                          headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value, 'Content-Type': 'application/x-www-form-urlencoded' },
+                          body: new URLSearchParams({ name: this.newMfgName.trim() }),
+                      });
+                      const d = await res.json();
+                      if (!res.ok) { this.mfgError = d.error || 'Error'; return; }
+                      if (!this.mfgs.find(m => m.id === d.id)) { this.mfgs.push({id: d.id, name: d.name}); this.mfgs.sort((a,b) => a.name.localeCompare(b.name)); }
+                      this.mfgSelect({id: d.id, name: d.name});
+                      this.mfgModal = false; this.newMfgName = '';
+                  } catch(e) { this.mfgError = 'Network error.'; }
+                  finally    { this.mfgSaving = false; }
+              }
+          }"
+          @keydown.escape.window="catModal = false; mfgModal = false; catOpen = false; mfgOpen = false">
+
+        {% csrf_token %}
+
+        <!-- Global error banner -->
+        {% if form.errors %}
+        <div class="bg-red-50 border border-red-100 rounded-2xl p-5 mb-6 flex items-start gap-3">
+            <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+            <div>
+                <p class="text-red-600 font-bold text-sm mb-1">Please correct the errors below</p>
+                {{ form.non_field_errors }}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- ═══════════════════════════════════════════════════════
+             PRODUCT CARD — 2-column grid
+             Row 1: [Product Name ×2 hero]
+             Row 2: [Category] [Manufacturer]
+             Row 3: [Unit Type] [HSN Code]
+             ═══════════════════════════════════════════════════════ -->
+        <div class="bg-white rounded-[2rem] border-2 border-gray-200 shadow-[0_8px_30px_-8px_rgba(0,0,0,0.07)] p-7 md:p-9">
+
+            <div class="text-[10px] font-bold uppercase tracking-widest text-gray-400 flex items-center gap-2 mb-7">
+                <span class="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block"></span>
+                Product Details
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-6">
+
+                <!-- ── Product Name (hero, full width) ── -->
+                <div class="md:col-span-2 space-y-1.5">
                     <label for="{{ form.name.id_for_label }}"
-                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
-                        {{ form.name.label }}
+                        class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">
+                        Product Name <span class="text-red-500">*</span>
                     </label>
-                    {{ form.name }}
+                    <input type="text"
+                        name="{{ form.name.name }}"
+                        id="{{ form.name.id_for_label }}"
+                        value="{{ form.name.value|default:'' }}"
+                        placeholder="Full product name"
+                        class="w-full h-12 bg-gray-50 border-2 {% if form.name.errors %}border-red-300 bg-red-50{% else %}border-gray-200 hover:border-gray-300 focus:border-orange-400{% endif %} rounded-xl px-4 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md focus:shadow-orange-500/8 placeholder-gray-300">
                     {% if form.name.errors %}
-                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.name.errors.0 }}</p>
+                    <p class="text-red-500 text-xs font-bold pl-1 mt-0.5">{{ form.name.errors.0 }}</p>
                     {% endif %}
                 </div>
-            </div>
 
-            <!-- Row 2: Category & Manufacturer -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                    <label for="{{ form.category.id_for_label }}"
-                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
-                        {{ form.category.label }}
+                <!-- ── Category (searchable + modal) ── -->
+                <div class="space-y-1.5" @click.outside="if (!catModal) catOpen = false">
+                    <label class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">
+                        Category <span class="text-red-500">*</span>
                     </label>
-                    {{ form.category }}
+                    <input type="hidden" name="category" :value="catId">
+                    <div class="relative">
+                        <input type="text"
+                            x-model="catSearch"
+                            @focus="catOpen = true" @input="catOpen = true"
+                            placeholder="Search category…"
+                            autocomplete="off"
+                            class="w-full h-12 bg-gray-50 border-2 {% if form.category.errors %}border-red-300 bg-red-50{% else %}border-gray-200 hover:border-gray-300 focus:border-orange-400{% endif %} rounded-xl px-4 pr-9 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md focus:shadow-orange-500/8 placeholder-gray-300">
+                        <button type="button" @click="catId ? catClear() : (catOpen = !catOpen)"
+                            class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors p-0.5">
+                            <template x-if="catId"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></template>
+                            <template x-if="!catId"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></template>
+                        </button>
+                        <!-- Dropdown -->
+                        <div x-show="catOpen"
+                             x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 -translate-y-1 scale-[0.98]" x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                             x-transition:leave="transition ease-in duration-75" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0 -translate-y-1"
+                             class="absolute z-40 left-0 right-0 mt-1.5 bg-white border-2 border-gray-100 rounded-2xl shadow-xl shadow-gray-900/10 overflow-hidden">
+                            <div class="max-h-48 overflow-y-auto">
+                                <template x-for="c in catFiltered" :key="c.id">
+                                    <button type="button" @click="catSelect(c)"
+                                        class="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors flex items-center gap-2.5"
+                                        :class="{ 'bg-orange-50 text-orange-700': catId == c.id }">
+                                        <svg class="w-3.5 h-3.5 text-orange-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M7 7h10M7 12h10M7 17h6"/></svg>
+                                        <span x-text="c.name"></span>
+                                        <svg x-show="catId == c.id" class="w-3.5 h-3.5 text-orange-500 ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                                    </button>
+                                </template>
+                                <!-- No match → Add new -->
+                                <template x-if="catHasNoMatch">
+                                    <div class="px-4 py-3 border-t border-gray-50">
+                                        <button type="button" @click="openCatModal()"
+                                            class="flex items-center gap-2 text-sm font-bold text-orange-600 hover:text-orange-800 transition-colors">
+                                            <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                            </span>
+                                            Add "<span x-text="catSearch"></span>" as new category
+                                        </button>
+                                    </div>
+                                </template>
+                                <template x-if="!catHasNoMatch && catFiltered.length === 0">
+                                    <div class="px-4 py-3 text-sm text-gray-400 italic">Start typing to search…</div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                     {% if form.category.errors %}
-                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.category.errors.0 }}</p>
+                    <p class="text-red-500 text-xs font-bold pl-1 mt-0.5">{{ form.category.errors.0 }}</p>
                     {% endif %}
                 </div>
-                <div>
-                    <label for="{{ form.manufacturer.id_for_label }}"
-                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
-                        {{ form.manufacturer.label }}
+
+                <!-- ── Manufacturer (searchable + modal) ── -->
+                <div class="space-y-1.5" @click.outside="if (!mfgModal) mfgOpen = false">
+                    <label class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">
+                        Manufacturer <span class="text-red-500">*</span>
                     </label>
-                    {{ form.manufacturer }}
+                    <input type="hidden" name="manufacturer" :value="mfgId">
+                    <div class="relative">
+                        <input type="text"
+                            x-model="mfgSearch"
+                            @focus="mfgOpen = true" @input="mfgOpen = true"
+                            placeholder="Search manufacturer…"
+                            autocomplete="off"
+                            class="w-full h-12 bg-gray-50 border-2 {% if form.manufacturer.errors %}border-red-300 bg-red-50{% else %}border-gray-200 hover:border-gray-300 focus:border-orange-400{% endif %} rounded-xl px-4 pr-9 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md focus:shadow-orange-500/8 placeholder-gray-300">
+                        <button type="button" @click="mfgId ? mfgClear() : (mfgOpen = !mfgOpen)"
+                            class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors p-0.5">
+                            <template x-if="mfgId"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></template>
+                            <template x-if="!mfgId"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></template>
+                        </button>
+                        <!-- Dropdown -->
+                        <div x-show="mfgOpen"
+                             x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 -translate-y-1 scale-[0.98]" x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                             x-transition:leave="transition ease-in duration-75" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0 -translate-y-1"
+                             class="absolute z-40 left-0 right-0 mt-1.5 bg-white border-2 border-gray-100 rounded-2xl shadow-xl shadow-gray-900/10 overflow-hidden">
+                            <div class="max-h-48 overflow-y-auto">
+                                <template x-for="m in mfgFiltered" :key="m.id">
+                                    <button type="button" @click="mfgSelect(m)"
+                                        class="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors flex items-center gap-2.5"
+                                        :class="{ 'bg-orange-50 text-orange-700': mfgId == m.id }">
+                                        <svg class="w-3.5 h-3.5 text-orange-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/></svg>
+                                        <span x-text="m.name"></span>
+                                        <svg x-show="mfgId == m.id" class="w-3.5 h-3.5 text-orange-500 ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                                    </button>
+                                </template>
+                                <!-- No match → Add new -->
+                                <template x-if="mfgHasNoMatch">
+                                    <div class="px-4 py-3 border-t border-gray-50">
+                                        <button type="button" @click="openMfgModal()"
+                                            class="flex items-center gap-2 text-sm font-bold text-orange-600 hover:text-orange-800 transition-colors">
+                                            <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                            </span>
+                                            Add "<span x-text="mfgSearch"></span>" as new manufacturer
+                                        </button>
+                                    </div>
+                                </template>
+                                <template x-if="!mfgHasNoMatch && mfgFiltered.length === 0">
+                                    <div class="px-4 py-3 text-sm text-gray-400 italic">Start typing to search…</div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                     {% if form.manufacturer.errors %}
-                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.manufacturer.errors.0 }}</p>
+                    <p class="text-red-500 text-xs font-bold pl-1 mt-0.5">{{ form.manufacturer.errors.0 }}</p>
                     {% endif %}
                 </div>
-            </div>
 
-            <!-- Row 3: Unit & HSN -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
+                <!-- ── Unit Type (styled native select) ── -->
+                <div class="space-y-1.5">
                     <label for="{{ form.unit_type.id_for_label }}"
-                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
-                        {{ form.unit_type.label }}
+                        class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">
+                        Unit Type <span class="text-red-500">*</span>
                     </label>
-                    {{ form.unit_type }}
+                    <div class="relative">
+                        <select name="{{ form.unit_type.name }}"
+                            id="{{ form.unit_type.id_for_label }}"
+                            class="w-full h-12 appearance-none bg-gray-50 border-2 {% if form.unit_type.errors %}border-red-300 bg-red-50{% else %}border-gray-200 hover:border-gray-300 focus:border-orange-400{% endif %} rounded-xl px-4 pr-10 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md focus:shadow-orange-500/8 cursor-pointer">
+                            <option value="">— Select unit —</option>
+                            {% for val, label in form.fields.unit_type.choices %}
+                            {% if val %}
+                            <option value="{{ val }}" {% if form.unit_type.value == val %}selected{% endif %}>{{ label }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
                     {% if form.unit_type.errors %}
-                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.unit_type.errors.0 }}</p>
+                    <p class="text-red-500 text-xs font-bold pl-1 mt-0.5">{{ form.unit_type.errors.0 }}</p>
                     {% endif %}
                 </div>
-                <div>
+
+                <!-- ── HSN Code ── -->
+                <div class="space-y-1.5">
                     <label for="{{ form.hsn_code.id_for_label }}"
-                        class="text-[10px] font-bold uppercase tracking-widest text-gray-400 pl-3 mb-2 block">
-                        {{ form.hsn_code.label }}
+                        class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">
+                        HSN Code <span class="text-red-500">*</span>
                     </label>
-                    {{ form.hsn_code }}
+                    <input type="text"
+                        name="{{ form.hsn_code.name }}"
+                        id="{{ form.hsn_code.id_for_label }}"
+                        value="{{ form.hsn_code.value|default:'' }}"
+                        placeholder="e.g. 3808"
+                        class="w-full h-12 bg-gray-50 border-2 {% if form.hsn_code.errors %}border-red-300 bg-red-50{% else %}border-gray-200 hover:border-gray-300 focus:border-orange-400{% endif %} rounded-xl px-4 text-sm font-semibold text-gray-900 font-mono tracking-widest transition-all outline-none focus:bg-white focus:shadow-md focus:shadow-orange-500/8 placeholder-gray-300">
                     {% if form.hsn_code.errors %}
-                    <p class="text-red-500 text-xs mt-1 pl-3">{{ form.hsn_code.errors.0 }}</p>
+                    <p class="text-red-500 text-xs font-bold pl-1 mt-0.5">{{ form.hsn_code.errors.0 }}</p>
                     {% endif %}
                 </div>
-            </div>
 
-            <!-- Action Bar -->
-            <div class="flex items-center justify-end gap-6 mt-12 pt-8 border-t border-gray-50">
-                <a href="{% url 'product_list' %}"
-                    class="text-gray-400 hover:text-gray-900 font-bold transition-colors">
-                    Cancel
-                </a>
-                <button type="submit"
-                    class="bg-gray-900 hover:bg-black text-white h-14 px-8 rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/10 hover:shadow-gray-900/20 active:scale-95 transition-all flex items-center gap-3">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                        <path d="M5 13l4 4L19 7"></path>
-                    </svg>
-                    <span>Save Product</span>
+            </div><!-- /grid -->
+        </div>
+        <!-- / PRODUCT CARD -->
+
+        <!-- ═══════════════════════════════════════════════════════
+             STICKY SAVE BAR
+             ═══════════════════════════════════════════════════════ -->
+        <div class="fixed bottom-0 left-0 right-0 z-30 bg-white/90 backdrop-blur-md border-t-2 border-gray-100 px-6 py-4 flex items-center justify-end gap-4 shadow-[0_-8px_24px_-4px_rgba(0,0,0,0.06)]">
+            <a href="{% url 'product_list' %}"
+                class="text-gray-400 hover:text-gray-700 font-bold text-sm px-5 py-3 rounded-xl hover:bg-gray-100 transition-all">
+                Cancel
+            </a>
+            <button type="submit"
+                class="bg-gray-900 hover:bg-black text-white h-12 px-7 rounded-xl font-bold text-sm shadow-lg shadow-gray-900/15 hover:scale-[1.02] active:scale-95 transition-all flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                Save Product
+            </button>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════
+             QUICK-ADD CATEGORY MODAL  (Rule 32: Modal Escape Hatch)
+             ═══════════════════════════════════════════════════════ -->
+        <div x-show="catModal"
+             x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+             x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+             class="fixed inset-0 z-50 flex items-center justify-center p-4" style="display:none">
+            <div class="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" @click="catModal = false"></div>
+            <div class="relative bg-white rounded-[2rem] p-8 w-full max-w-sm shadow-2xl"
+                 x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-2" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 scale-100" x-transition:leave-end="opacity-0 scale-95 translate-y-2"
+                 @click.stop>
+                <button type="button" @click="catModal = false" class="absolute top-5 right-5 text-gray-400 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-10 h-10 rounded-2xl bg-orange-100 flex items-center justify-center shrink-0">
+                        <svg class="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M7 7h10M7 12h10M7 17h6"/></svg>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-900 leading-tight">Add Category</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">Available across all products</p>
+                    </div>
+                </div>
+                <!-- Category Name -->
+                <div class="space-y-1.5 mb-4">
+                    <label class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">Category Name <span class="text-red-500">*</span></label>
+                    <input type="text" x-model="newCatName" @keydown.enter.prevent="saveCat()"
+                        placeholder="e.g. Herbicide, Fertilizer…"
+                        x-ref="catNameInput"
+                        x-init="$watch('catModal', v => v && $nextTick(() => $refs.catNameInput.focus()))"
+                        class="w-full h-12 bg-gray-50 border-2 border-gray-200 hover:border-gray-300 focus:border-orange-400 rounded-xl px-4 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md placeholder-gray-300">
+                </div>
+                <!-- Tax Rates row -->
+                <div class="grid grid-cols-2 gap-3 mb-5">
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 pl-1 block">CGST %</label>
+                        <input type="number" x-model="newCatCgst" placeholder="0" min="0" max="50" step="0.5"
+                            class="w-full h-10 bg-gray-50 border-2 border-gray-200 hover:border-gray-300 focus:border-orange-400 rounded-xl px-3 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white placeholder-gray-300">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-bold uppercase tracking-wider text-gray-400 pl-1 block">SGST %</label>
+                        <input type="number" x-model="newCatSgst" placeholder="0" min="0" max="50" step="0.5"
+                            class="w-full h-10 bg-gray-50 border-2 border-gray-200 hover:border-gray-300 focus:border-orange-400 rounded-xl px-3 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white placeholder-gray-300">
+                    </div>
+                </div>
+                <p x-show="catError" x-text="catError" class="text-red-500 text-xs font-bold pl-1 mb-3"></p>
+                <div class="flex items-center gap-3">
+                    <button type="button" @click="catModal = false" class="flex-1 h-11 rounded-xl border-2 border-gray-200 text-sm font-bold text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-all">Cancel</button>
+                    <button type="button" @click="saveCat()" :disabled="!newCatName.trim() || catSaving"
+                        class="flex-1 h-11 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-bold transition-all flex items-center justify-center gap-2 active:scale-95">
+                        <template x-if="catSaving"><svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg></template>
+                        <template x-if="!catSaving"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></template>
+                        <span x-text="catSaving ? 'Saving…' : 'Create Category'"></span>
+                    </button>
+                </div>
             </div>
+        </div>
+        <!-- / QUICK-ADD CATEGORY MODAL -->
 
-        </form>
-    </div>
+        <!-- ═══════════════════════════════════════════════════════
+             QUICK-ADD MANUFACTURER MODAL  (Rule 32)
+             ═══════════════════════════════════════════════════════ -->
+        <div x-show="mfgModal"
+             x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+             x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+             class="fixed inset-0 z-50 flex items-center justify-center p-4" style="display:none">
+            <div class="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" @click="mfgModal = false"></div>
+            <div class="relative bg-white rounded-[2rem] p-8 w-full max-w-sm shadow-2xl"
+                 x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-2" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 scale-100" x-transition:leave-end="opacity-0 scale-95 translate-y-2"
+                 @click.stop>
+                <button type="button" @click="mfgModal = false" class="absolute top-5 right-5 text-gray-400 hover:text-gray-700 p-1.5 rounded-lg hover:bg-gray-100 transition-colors">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-10 h-10 rounded-2xl bg-orange-100 flex items-center justify-center shrink-0">
+                        <svg class="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-4 0v2"/></svg>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold text-gray-900 leading-tight">Add Manufacturer</h2>
+                        <p class="text-xs text-gray-400 mt-0.5">Available across all products</p>
+                    </div>
+                </div>
+                <div class="space-y-1.5 mb-5">
+                    <label class="text-xs font-bold uppercase tracking-wider text-gray-500 pl-1 block">Manufacturer Name <span class="text-red-500">*</span></label>
+                    <input type="text" x-model="newMfgName" @keydown.enter.prevent="saveMfg()"
+                        placeholder="e.g. Bayer, Syngenta…"
+                        x-ref="mfgNameInput"
+                        x-init="$watch('mfgModal', v => v && $nextTick(() => $refs.mfgNameInput.focus()))"
+                        class="w-full h-12 bg-gray-50 border-2 border-gray-200 hover:border-gray-300 focus:border-orange-400 rounded-xl px-4 text-sm font-semibold text-gray-900 transition-all outline-none focus:bg-white focus:shadow-md placeholder-gray-300">
+                </div>
+                <p x-show="mfgError" x-text="mfgError" class="text-red-500 text-xs font-bold pl-1 mb-3"></p>
+                <div class="flex items-center gap-3">
+                    <button type="button" @click="mfgModal = false" class="flex-1 h-11 rounded-xl border-2 border-gray-200 text-sm font-bold text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-all">Cancel</button>
+                    <button type="button" @click="saveMfg()" :disabled="!newMfgName.trim() || mfgSaving"
+                        class="flex-1 h-11 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-bold transition-all flex items-center justify-center gap-2 active:scale-95">
+                        <template x-if="mfgSaving"><svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg></template>
+                        <template x-if="!mfgSaving"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></template>
+                        <span x-text="mfgSaving ? 'Saving…' : 'Create Manufacturer'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- / QUICK-ADD MANUFACTURER MODAL -->
+
+    </form>
 </div>
-
-<style>
-    /* Custom Input Style Override to ensure matches perfectly */
-    input[type="text"],
-    input[type="number"],
-    select,
-    textarea {
-        width: 100%;
-        height: 3.5rem;
-        /* h-14 */
-        background-color: #f9fafb;
-        /* bg-gray-50 */
-        border-width: 1px;
-        border-color: transparent;
-        border-radius: 1rem;
-        /* rounded-2xl */
-        padding-left: 1.25rem;
-        /* px-5 */
-        padding-right: 1.25rem;
-        font-size: 1rem;
-        /* text-base */
-        font-weight: 500;
-        /* font-medium */
-        transition-property: all;
-        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-        transition-duration: 150ms;
-        outline: 2px solid transparent;
-        outline-offset: 2px;
-    }
-
-    input[type="text"]:hover,
-    input[type="number"]:hover,
-    select:hover,
-    textarea:hover {
-        background-color: #ffffff;
-        /* hover:bg-white */
-        border-color: #e5e7eb;
-        /* hover:border-gray-200 */
-    }
-
-    input[type="text"]:focus,
-    input[type="number"]:focus,
-    select:focus,
-    textarea:focus {
-        background-color: #ffffff;
-        /* focus:bg-white */
-        border-color: rgb(249 115 22 / 0.2);
-        /* focus:border-orange-500/20 */
-        --tw-shadow: 0 10px 15px -3px rgb(249 115 22 / 0.05), 0 4px 6px -4px rgb(249 115 22 / 0.05);
-        /* focus:shadow-orange-500/5 */
-        box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
-    }
-
-    input::placeholder {
-        color: #d1d5db;
-        /* placeholder-gray-300 */
-    }
-</style>
 {% endblock %}
