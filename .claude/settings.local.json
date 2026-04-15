@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py check)",
+      "Bash(python manage.py shell -c \"from farming.models import CropMaster, CropProductNorm, CultivationRecord, AgronomistProfile, Plot, PestDiseaseLibrary, PestDiseaseCropLink, FieldVisit, FieldConsultation, DiagnosisLine, ConsultationPhoto, PrescriptionLine; print\\(''''All 12 models imported OK''''\\)\")",
+      "Bash(python manage.py shell -c \":*)",
+      "Bash(python manage.py check --settings=config.settings)"
+    ]
+  }
+}

@@ -48,7 +48,7 @@ class Batch(models.Model):
         unique_together = ('product', 'batch_number', 'mrp')
         constraints = [
             models.CheckConstraint(
-                check=models.Q(current_quantity__gte=0),
+                condition=models.Q(current_quantity__gte=0),
                 name='batch_non_negative_stock',
             ),
         ]
@@ -86,7 +86,7 @@ class StockBin(models.Model):
         unique_together = ('warehouse', 'batch')
         constraints = [
             models.CheckConstraint(
-                check=models.Q(actual_qty__gte=0),
+                condition=models.Q(actual_qty__gte=0),
                 name='stockbin_non_negative_qty',
             ),
         ]

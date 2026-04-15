@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
                 ('warehouse', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='stock_bins', to='inventory.warehouse')),
             ],
             options={
-                'constraints': [models.CheckConstraint(check=models.Q(('actual_qty__gte', 0)), name='stockbin_non_negative_qty')],
+                'constraints': [models.CheckConstraint(condition=models.Q(('actual_qty__gte', 0)), name='stockbin_non_negative_qty')],
                 'unique_together': {('warehouse', 'batch')},
             },
         ),

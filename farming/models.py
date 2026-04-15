@@ -1,7 +1,9 @@
 from django.db import models
 from datetime import date
 
+from django.contrib.auth import get_user_model
 from master_data.models import Customer, Product, Village
+from inventory.models import Batch
 
 
 class CropMaster(models.Model):
@@ -36,6 +38,11 @@ class CropProductNorm(models.Model):
                                            help_text='Quantity per acre')
     unit             = models.CharField(max_length=20,
                                         help_text='Unit of measurement (mirrors Product.unit_type)')
+    severity_adjustments = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Multipliers by severity, e.g. {"LOW": 0.8, "MEDIUM": 1.0, "HIGH": 1.3, "CRITICAL": 1.6}',
+    )
     notes            = models.TextField(blank=True)
 
     class Meta:
@@ -326,6 +333,8 @@ class FieldConsultation(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
         SUBMITTED = 'submitted', 'Submitted'
+        APPROVED = 'approved', 'Approved'
+        DISPENSED = 'dispensed', 'Dispensed'
         CLOSED = 'closed', 'Closed'
 
     consultation_number = models.CharField(
@@ -375,6 +384,15 @@ class FieldConsultation(models.Model):
         choices=Status.choices,
         default=Status.DRAFT
     )
+    approved_by = models.ForeignKey(
+        get_user_model(),
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_consultations',
+        help_text='User who approved the prescription',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -438,6 +456,26 @@ class DiagnosisLine(models.Model):
 
     def __str__(self):
         return f"{self.consultation.consultation_number} - {self.pest_disease.name} ({self.get_severity_display()})"
+
+
+class ConsultationPhoto(models.Model):
+    """Photo evidence attached to a DiagnosisLine (multi-photo support)."""
+
+    diagnosis_line = models.ForeignKey(
+        DiagnosisLine,
+        on_delete=models.CASCADE,
+        related_name='photos',
+    )
+    photo = models.ImageField(upload_to='consultation_photos/')
+    caption = models.CharField(max_length=200, blank=True)
+    taken_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'farming_consultation_photo'
+        ordering = ['taken_at']
+
+    def __str__(self):
+        return f"Photo for {self.diagnosis_line} — {self.taken_at:%Y-%m-%d %H:%M}"
 
 
 class PrescriptionLine(models.Model):
@@ -513,6 +551,27 @@ class PrescriptionLine(models.Model):
         max_length=20,
         choices=Status.choices,
         default=Status.RECOMMENDED
+    )
+    chosen_batch = models.ForeignKey(
+        Batch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='prescription_lines',
+        help_text='Batch selected during dispense',
+    )
+    pack_quantity = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Number of packs to dispense',
+    )
+    sales_item = models.ForeignKey(
+        'transactions.SalesItem',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='prescription_lines',
+        help_text='SalesItem created when dispensed',
     )
     notes = models.TextField(blank=True)
     sequence = models.PositiveIntegerField(

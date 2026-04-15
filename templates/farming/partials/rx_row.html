@@ -1,0 +1,238 @@
+{% comment %}
+  HTMX fragment — one PrescriptionLine row.
+  States:
+    • dispensed  → compact read-only summary card (green border)
+    • edit/new   → editable form with Alpine dosage calculator
+
+  Context: form, consultation, row (None if new), row_id (0 if new),
+           dx_areas_json
+{% endcomment %}
+
+{% if row and row.status == 'dispensed' %}
+{# ── DISPENSED state ────────────────────────────────────────────────────── #}
+<div id="rx-row-{{ row.pk }}" data-rx-row
+     class="bg-white border border-green-200 rounded-2xl p-5 shadow-sm">
+
+    <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-green-100 text-green-700 text-[10px] font-bold flex items-center justify-center">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">Rx #{{ row.sequence|add:1 }}</span>
+        </div>
+        <span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wide">Dispensed</span>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Product</p>
+            <p class="font-semibold text-sm text-gray-800 mt-0.5">{{ row.product.name }}</p>
+        </div>
+        {% if row.chosen_batch %}
+        <div>
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Batch</p>
+            <p class="font-semibold text-sm text-gray-800 mt-0.5">{{ row.chosen_batch.batch_number }}</p>
+        </div>
+        <div>
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Qty Dispensed</p>
+            <p class="font-semibold text-sm text-gray-800 mt-0.5">
+                {{ row.pack_quantity }} pack{{ row.pack_quantity|pluralize }}
+                <span class="text-gray-400 text-xs">({{ row.total_quantity }} {{ row.get_dosage_unit_display }})</span>
+            </p>
+        </div>
+        {% endif %}
+        {% if row.sales_item %}
+        <div>
+            <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Invoice</p>
+            <a href="{% url 'invoice_detail' row.sales_item.invoice_id %}"
+               target="_blank"
+               class="text-sm font-semibold text-blue-600 hover:text-blue-800 mt-0.5 inline-flex items-center gap-1">
+                {{ row.sales_item.invoice.invoice_number }}
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                </svg>
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if row.notes %}
+    <p class="mt-3 text-xs text-gray-400 italic border-t border-gray-100 pt-2">{{ row.notes }}</p>
+    {% endif %}
+</div>
+
+{% else %}
+{# ── EDIT / NEW state ───────────────────────────────────────────────────── #}
+<div id="rx-row-{{ row_id }}"
+     data-rx-row
+     data-areas="{{ dx_areas_json|escape }}"
+     x-data="{
+       dosage: 0,
+       dxId: '',
+       areas: {},
+       computedTotal: '0.000'
+     }"
+     x-init="
+       areas = JSON.parse($el.dataset.areas || '{}');
+       dosage = parseFloat('{{ row.dosage_per_acre|default:0 }}') || 0;
+       dxId = String({{ row.diagnosis_line_id|default:'null' }} || '');
+       computedTotal = (dosage * (parseFloat(areas[dxId]) || 0)).toFixed(3);
+       $watch('dosage', v => computedTotal = (v * (parseFloat(areas[dxId]) || 0)).toFixed(3));
+       $watch('dxId',  v => computedTotal = (dosage * (parseFloat(areas[v])  || 0)).toFixed(3));
+     "
+     class="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm group">
+
+    <form method="post"
+          hx-post="{% url 'prescription_save_row' consultation.pk row_id %}"
+          hx-target="{% if row_id %}[data-rx-row][id='rx-row-{{ row_id }}']{% else %}closest [data-rx-row]{% endif %}"
+          hx-swap="outerHTML"
+          novalidate>
+        {% csrf_token %}
+
+        <!-- Row header -->
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2">
+                {% if row_id %}
+                <span class="w-6 h-6 rounded-full bg-green-100 text-green-700 text-[10px] font-bold flex items-center justify-center">
+                    {{ row.sequence|add:1 }}
+                </span>
+                {% else %}
+                <span class="w-6 h-6 rounded-full bg-gray-100 text-gray-400 text-[10px] font-bold flex items-center justify-center">+</span>
+                {% endif %}
+                <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                    {% if row_id %}Rx #{{ row.sequence|add:1 }}{% else %}New Prescription{% endif %}
+                </span>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button type="submit"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Save
+                </button>
+                {% if row_id %}
+                <button type="button"
+                    hx-post="{% url 'prescription_delete_row' consultation.pk row_id %}"
+                    hx-target="#rx-row-{{ row_id }}"
+                    hx-swap="delete"
+                    hx-confirm="Remove this prescription line?"
+                    class="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-500 hover:bg-red-50 text-xs font-bold rounded-lg transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                    Remove
+                </button>
+                {% else %}
+                <button type="button"
+                    onclick="this.closest('[data-rx-row]').remove()"
+                    class="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-200 text-gray-400 hover:bg-gray-50 text-xs font-bold rounded-lg transition-colors">
+                    Cancel
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Field errors -->
+        {% if form.non_field_errors %}
+        <div class="mb-3 p-3 bg-red-50 border border-red-100 rounded-xl text-xs text-red-700">
+            {{ form.non_field_errors|join:", " }}
+        </div>
+        {% endif %}
+
+        <!-- Row 1: Diagnosis link + Product + Method + Unit -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-3 mb-3">
+
+            <div class="md:col-span-3 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">For Diagnosis</label>
+                {{ form.diagnosis_line }}
+                {% if form.diagnosis_line.errors %}
+                <p class="text-xs text-red-600">{{ form.diagnosis_line.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <div class="md:col-span-4 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                    Product <span class="text-red-500">*</span>
+                </label>
+                {{ form.product }}
+                {% if form.product.errors %}
+                <p class="text-xs text-red-600">{{ form.product.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <div class="md:col-span-3 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Method</label>
+                {{ form.application_method }}
+            </div>
+
+            <div class="md:col-span-2 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Unit</label>
+                {{ form.dosage_unit }}
+                {% if form.dosage_unit.errors %}
+                <p class="text-xs text-red-600">{{ form.dosage_unit.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+        </div>
+
+        <!-- Row 2: Dosage + computed total + timing + frequency -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+
+            <div class="md:col-span-2 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                    Dose/Acre <span class="text-red-500">*</span>
+                </label>
+                {{ form.dosage_per_acre }}
+                {% if form.dosage_per_acre.errors %}
+                <p class="text-xs text-red-600">{{ form.dosage_per_acre.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Live total preview (Alpine) -->
+            <div class="md:col-span-2 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Total Qty</label>
+                <div class="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 font-mono"
+                     x-text="computedTotal">{{ row.total_quantity|default:'—' }}</div>
+            </div>
+
+            <div class="md:col-span-4 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Timing</label>
+                {{ form.timing }}
+            </div>
+
+            <div class="md:col-span-4 space-y-1">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Frequency</label>
+                {{ form.frequency }}
+            </div>
+
+        </div>
+
+        {% if row.notes or not row_id %}
+        <div class="mt-3 space-y-1">
+            <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wide">Notes</label>
+            {{ form.notes }}
+        </div>
+        {% endif %}
+
+    </form>
+
+    {# ── Dispense trigger (APPROVED consultation + saved RECOMMENDED line) ── #}
+    {% if row_id and row.status == 'recommended' and consultation.status == 'approved' %}
+    <div class="mt-3 pt-3 border-t border-gray-100 flex justify-end">
+        <button type="button"
+            hx-post="{% url 'prescription_dispense_form' consultation.pk row_id %}"
+            hx-target="#rx-row-{{ row_id }}"
+            hx-swap="outerHTML"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors shadow-sm">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+            Dispense
+        </button>
+    </div>
+    {% endif %}
+
+</div>
+{% endif %}

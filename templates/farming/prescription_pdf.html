@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Prescription — {{ consultation.consultation_number }}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 11px; color: #1a1a1a; padding: 32px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #166534; padding-bottom: 16px; margin-bottom: 20px; }
+  .header-left h1 { font-size: 20px; font-weight: 700; color: #166534; }
+  .header-left p { color: #555; margin-top: 3px; font-size: 11px; }
+  .header-right { text-align: right; }
+  .header-right .ref { font-family: monospace; font-size: 13px; font-weight: 700; color: #111; }
+  .header-right .meta { color: #666; font-size: 10px; margin-top: 3px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+  .info-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; }
+  .info-box .label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #888; margin-bottom: 3px; }
+  .info-box .value { font-weight: 600; color: #111; font-size: 12px; }
+  .section-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
+  .dx-table, .rx-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  .dx-table th, .rx-table th { background: #f3f4f6; text-align: left; padding: 6px 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #555; }
+  .dx-table td, .rx-table td { padding: 7px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+  .dx-table tr:last-child td, .rx-table tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 9999px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+  .badge-low { background: #dcfce7; color: #166534; }
+  .badge-medium { background: #fef3c7; color: #92400e; }
+  .badge-high { background: #ffedd5; color: #9a3412; }
+  .badge-critical { background: #fee2e2; color: #991b1b; }
+  .footer { margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 16px; display: flex; justify-content: space-between; }
+  .sig-box { text-align: center; }
+  .sig-line { border-top: 1px solid #111; width: 160px; margin: 32px auto 6px; }
+  .sig-label { font-size: 10px; color: #555; }
+  .approved-note { font-size: 10px; color: #166534; font-weight: 600; margin-top: 12px; }
+  .watermark { font-size: 9px; color: #bbb; text-align: center; margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <h1>Field Prescription</h1>
+    <p>Agricultural Clinical Decision Support</p>
+  </div>
+  <div class="header-right">
+    <div class="ref">{{ consultation.consultation_number }}</div>
+    <div class="meta">Date: {{ consultation.consultation_date }}</div>
+    {% if consultation.weather_conditions %}<div class="meta">Weather: {{ consultation.weather_conditions }}</div>{% endif %}
+    {% if consultation.crop_stage %}<div class="meta">Crop Stage: {{ consultation.crop_stage }}</div>{% endif %}
+  </div>
+</div>
+
+<!-- Info grid -->
+<div class="info-grid">
+  <div class="info-box">
+    <div class="label">Farmer</div>
+    <div class="value">{{ consultation.customer.name }}</div>
+    {% if consultation.customer.mobile_no %}<div style="font-size:10px;color:#666;margin-top:2px">{{ consultation.customer.mobile_no }}</div>{% endif %}
+  </div>
+  <div class="info-box">
+    <div class="label">Agronomist</div>
+    <div class="value">{{ consultation.agronomist.name|default:"—" }}</div>
+    {% if consultation.agronomist %}<div style="font-size:10px;color:#666;margin-top:2px">{{ consultation.agronomist.designation }}</div>{% endif %}
+  </div>
+  <div class="info-box">
+    <div class="label">Status</div>
+    <div class="value">{{ consultation.get_status_display }}</div>
+    {% if consultation.approved_by %}<div style="font-size:10px;color:#166534;margin-top:2px">Approved: {{ consultation.approved_by.get_full_name|default:consultation.approved_by.username }}</div>{% endif %}
+  </div>
+</div>
+
+{% if consultation.general_observations %}
+<div style="margin-bottom:16px;padding:10px 12px;background:#f9fafb;border-left:3px solid #d1fae5;border-radius:4px;font-size:11px;color:#444;font-style:italic;">
+  {{ consultation.general_observations }}
+</div>
+{% endif %}
+
+<!-- Diagnosis table -->
+<div class="section-title">Diagnosis</div>
+<table class="dx-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Pest / Disease</th>
+      <th>Crop / Plot</th>
+      <th>Affected Acres</th>
+      <th>Severity</th>
+      <th>Symptoms</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for dl in diagnosis_lines %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td><strong>{{ dl.pest_disease.name }}</strong>{% if dl.pest_disease.local_name %}<br><span style="color:#888;font-size:10px">{{ dl.pest_disease.local_name }}</span>{% endif %}</td>
+      <td>{% if dl.cultivation_record %}{{ dl.cultivation_record.crop.name }}{% else %}—{% endif %}</td>
+      <td>{{ dl.affected_area_acres }} ac</td>
+      <td>
+        <span class="badge badge-{{ dl.severity|lower }}">{{ dl.get_severity_display }}</span>
+      </td>
+      <td style="color:#555;font-size:10px">{{ dl.symptoms_observed|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="6" style="text-align:center;color:#aaa;padding:12px">No diagnoses recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Prescription table -->
+<div class="section-title">Prescription Lines</div>
+<table class="rx-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Product</th>
+      <th>For Diagnosis</th>
+      <th>Dose/Acre</th>
+      <th>Total Qty</th>
+      <th>Method</th>
+      <th>Timing / Frequency</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for rx in prescription_lines %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td><strong>{{ rx.product.name }}</strong></td>
+      <td style="font-size:10px;color:#555">{% if rx.diagnosis_line %}{{ rx.diagnosis_line.pest_disease.name }}{% else %}—{% endif %}</td>
+      <td>{{ rx.dosage_per_acre }} {{ rx.get_dosage_unit_display }}</td>
+      <td><strong>{{ rx.total_quantity }} {{ rx.get_dosage_unit_display }}</strong></td>
+      <td>{{ rx.get_application_method_display }}</td>
+      <td style="font-size:10px;color:#555">
+        {% if rx.timing %}{{ rx.timing }}{% endif %}
+        {% if rx.timing and rx.frequency %}<br>{% endif %}
+        {% if rx.frequency %}{{ rx.frequency }}{% endif %}
+        {% if not rx.timing and not rx.frequency %}—{% endif %}
+      </td>
+      <td style="font-size:10px;color:#555">{{ rx.notes|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="8" style="text-align:center;color:#aaa;padding:12px">No prescription lines added.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Footer / Signatures -->
+<div class="footer">
+  <div class="sig-box">
+    <div class="sig-line"></div>
+    <div class="sig-label">Agronomist Signature<br>{{ consultation.agronomist.name|default:"____________________" }}</div>
+  </div>
+  <div class="sig-box">
+    <div class="sig-line"></div>
+    <div class="sig-label">Farmer Acknowledgement<br>{{ consultation.customer.name }}</div>
+  </div>
+  {% if consultation.approved_by %}
+  <div class="sig-box">
+    <div class="sig-line"></div>
+    <div class="sig-label">Approved By<br>{{ consultation.approved_by.get_full_name|default:consultation.approved_by.username }}</div>
+    {% if consultation.approved_at %}<div class="approved-note">{{ consultation.approved_at|date:"d M Y" }}</div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="watermark">Generated from AgriCRM · {{ consultation.consultation_number }} · {{ consultation.consultation_date }}</div>
+
+</body>
+</html>

@@ -1,0 +1,59 @@
+{% if pests %}
+<div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-gray-100 bg-gray-50/60">
+                <th class="text-left px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Name</th>
+                <th class="text-left px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Local Name</th>
+                <th class="text-left px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Type</th>
+                <th class="text-left px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Affected Crops</th>
+                <th class="text-left px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
+                <th class="px-5 py-3"></th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+            {% for pest in pests %}
+            <tr class="hover:bg-gray-50/60 transition-colors">
+                <td class="px-5 py-3.5 font-semibold text-gray-800">{{ pest.name }}</td>
+                <td class="px-5 py-3.5 text-gray-400 italic text-xs">{{ pest.local_name|default:"—" }}</td>
+                <td class="px-5 py-3.5">
+                    {% if pest.type == 'pest' %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 uppercase">Pest</span>
+                    {% elif pest.type == 'disease' %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700 uppercase">Disease</span>
+                    {% elif pest.type == 'deficiency' %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase">Deficiency</span>
+                    {% else %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700 uppercase">Weed</span>
+                    {% endif %}
+                </td>
+                <td class="px-5 py-3.5">
+                    <div class="flex flex-wrap gap-1">
+                        {% for crop in pest.affected_crops.all %}
+                        <span class="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-semibold">{{ crop.name }}</span>
+                        {% empty %}
+                        <span class="text-gray-300 text-xs">—</span>
+                        {% endfor %}
+                    </div>
+                </td>
+                <td class="px-5 py-3.5">
+                    {% if pest.is_active %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700 uppercase">Active</span>
+                    {% else %}
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-400 uppercase">Inactive</span>
+                    {% endif %}
+                </td>
+                <td class="px-5 py-3.5 text-right">
+                    <a href="{% url 'pest_edit' pest.pk %}" class="text-xs font-bold text-gray-400 hover:text-gray-900 transition-colors">Edit</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-20 border-2 border-dashed border-gray-200 rounded-2xl">
+    <p class="text-gray-400 text-sm mb-4">No entries found.</p>
+    <a href="{% url 'pest_add' %}" class="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white font-bold rounded-xl text-sm">+ Add Entry</a>
+</div>
+{% endif %}
